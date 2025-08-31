@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = ["prost-examples", "proto2arrow-macro"]
+
+[workspace.dependencies]
+arrow = "56.1.0"
+prost = "0.14.1"
+prost-build = "0.14.1"
