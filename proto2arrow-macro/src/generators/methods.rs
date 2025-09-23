@@ -170,6 +170,8 @@ pub fn generate_finish_fn(
         .map(|fc| {
             let ident = fc.field.ident.clone().unwrap();
             let ident_str = ident.to_string();
+            let ident_str = ident_str.strip_prefix("r#").unwrap_or(&ident_str);
+
             let is_nullable = match data_type {
                 common::MessageDataType::Struct => {
                     fc.cardinality != common::FieldCardinality::Required
@@ -218,6 +220,8 @@ pub fn generate_finish_cloned_fn(
         .map(|fc| {
             let ident = fc.field.ident.clone().unwrap();
             let ident_str = ident.to_string();
+            let ident_str = ident_str.strip_prefix("r#").unwrap_or(&ident_str);
+
             let is_nullable = match data_type {
                 common::MessageDataType::Struct => {
                     fc.cardinality != common::FieldCardinality::Required

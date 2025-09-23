@@ -273,7 +273,7 @@ mod proto2arrow_tests {
             Field::new("email", DataType::Utf8, false),
             Field::new("age", DataType::UInt32, false),
             Field::new("is_active", DataType::Boolean, false),
-            Field::new("r#type", DataType::Int32, false),
+            Field::new("type", DataType::Int32, false),
             addresses_list,
             transactions_list,
             posts_map,
@@ -310,7 +310,7 @@ mod proto2arrow_tests {
             .as_primitive::<arrow::datatypes::UInt32Type>();
         let is_active_array = user_array.column_by_name("is_active").unwrap().as_boolean();
         let type_array = user_array
-            .column_by_name("r#type")
+            .column_by_name("type")
             .unwrap()
             .as_primitive::<arrow::datatypes::Int32Type>();
         let addresses_array = user_array
