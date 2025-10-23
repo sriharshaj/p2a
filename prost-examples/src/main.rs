@@ -4,7 +4,7 @@ fn main() {}
 mod proto2arrow_tests {
     use arrow::array::Array;
     use pretty_assertions::assert_eq;
-    use prost_examples::example;
+    use prost_examples::{example, example_builder};
 
     fn create_test_users() -> Vec<example::User> {
         let user1 = example::User {
@@ -124,13 +124,13 @@ mod proto2arrow_tests {
 
     #[test]
     fn builder_default() {
-        let _ = example::UserBuilder::default();
+        let _ = example_builder::UserBuilder::default();
     }
 
     #[test]
     fn append_value_to_builder() {
         let users = create_test_users();
-        let mut ub = example::UserBuilder::default();
+        let mut ub = example_builder::UserBuilder::default();
         ub.append_value(users.into_iter().next().unwrap());
         let user_array = ub.finish();
 
@@ -140,7 +140,7 @@ mod proto2arrow_tests {
 
     #[test]
     fn append_null_to_builder() {
-        let mut ub = example::UserBuilder::default();
+        let mut ub = example_builder::UserBuilder::default();
         ub.append_null();
         let user_array = ub.finish();
 
@@ -151,7 +151,7 @@ mod proto2arrow_tests {
     #[test]
     fn extend_builder_with_multiple_values() {
         let users = create_test_users();
-        let mut ub = example::UserBuilder::default();
+        let mut ub = example_builder::UserBuilder::default();
         ub.extend(users.into_iter().map(Some));
         let user_array = ub.finish();
 
@@ -162,7 +162,7 @@ mod proto2arrow_tests {
     #[test]
     fn finish_empties_builder_state() {
         let users = create_test_users();
-        let mut ub = example::UserBuilder::default();
+        let mut ub = example_builder::UserBuilder::default();
         ub.extend(users.into_iter().map(Some));
         let user_array = ub.finish();
 
@@ -178,7 +178,7 @@ mod proto2arrow_tests {
     #[test]
     fn finish_cloned_preserves_builder_state() {
         let users = create_test_users();
-        let mut ub = example::UserBuilder::default();
+        let mut ub = example_builder::UserBuilder::default();
         ub.extend(users.into_iter().map(Some));
         let user_array = ub.finish_cloned();
 
@@ -196,17 +196,13 @@ mod proto2arrow_tests {
         use arrow::datatypes::{DataType, Field, Fields};
         use std::sync::Arc;
 
-        let mut ub = example::UserBuilder::default();
+        let mut ub = example_builder::UserBuilder::default();
         let user_array = ub.finish();
         let schema = user_array.fields();
 
         let post_schema = DataType::Struct(Fields::from(vec![
             Field::new("title", DataType::Utf8, false),
-            Field::new_list(
-                "body",
-                Arc::new(Field::new_list_field(DataType::UInt8, true)),
-                true,
-            ),
+            Field::new("body", DataType::Binary, false),
         ]));
         let posts_map = Field::new_map(
             "posts",
@@ -288,7 +284,7 @@ mod proto2arrow_tests {
         use arrow::array::{Array, AsArray};
 
         let users = create_test_users();
-        let mut ub = example::UserBuilder::default();
+        let mut ub = example_builder::UserBuilder::default();
         ub.extend(users.clone().into_iter().map(Some));
         let user_array = ub.finish();
 
@@ -488,21 +484,18 @@ mod proto2arrow_tests {
         let body_array = values_array
             .column_by_name("body")
             .unwrap()
-            .as_list::<i32>();
+            .as_binary::<i32>();
 
         assert_eq!(title_array.value(first), "My First Post");
         assert_eq!(title_array.value(second), "Another Post");
 
-        let first_body = body_array.value(first);
-        let first_body_bytes = first_body.as_primitive::<arrow::datatypes::UInt8Type>();
-        let first_body_string =
-            String::from_utf8(first_body_bytes.values().iter().cloned().collect()).unwrap();
+        let first_body = body_array.value(first).into();
+        // let first_body_bytes = first_body.as_primitive::<arrow::datatypes::BinaryType>();
+        let first_body_string = String::from_utf8(first_body).unwrap();
         assert_eq!(first_body_string, "This is the content of my first post.");
 
-        let second_body = body_array.value(second);
-        let second_body_bytes = second_body.as_primitive::<arrow::datatypes::UInt8Type>();
-        let second_body_string =
-            String::from_utf8(second_body_bytes.values().iter().cloned().collect()).unwrap();
+        let second_body = body_array.value(second).into();
+        let second_body_string = String::from_utf8(second_body).unwrap();
         assert_eq!(second_body_string, "More content here.");
 
         // Validate User 3 (Charlie)
@@ -570,14 +563,12 @@ mod proto2arrow_tests {
         let body_array = values_array
             .column_by_name("body")
             .unwrap()
-            .as_list::<i32>();
+            .as_binary::<i32>();
 
         assert_eq!(title_array.value(0), "Charlie's Post");
 
-        let charlie_body = body_array.value(0);
-        let charlie_body_bytes = charlie_body.as_primitive::<arrow::datatypes::UInt8Type>();
-        let charlie_body_string =
-            String::from_utf8(charlie_body_bytes.values().iter().cloned().collect()).unwrap();
+        let charlie_body = body_array.value(0).into();
+        let charlie_body_string = String::from_utf8(charlie_body).unwrap();
         assert_eq!(charlie_body_string, "This is Charlie's post content.");
     }
 }
