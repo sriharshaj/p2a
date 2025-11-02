@@ -8,11 +8,12 @@ fn main() -> Result<()> {
         .compile_protos(&["protos/example.proto"], &["protos/"])?;
 
     let example = generated_dir.join("example.rs");
+    let example_builders = generated_dir.join("example_builders.rs");
     let protos_namespace = String::from("crate::example");
 
     if let Err(e) = p2a::Config::new()
         .with_protos_namespace(protos_namespace)
-        .generate_builders(&[&example])
+        .generate_builders(&example, &example_builders)
     {
         eprintln!("Error converting to arrow builders: {}", e);
         return Err(std::io::Error::other(e.to_string()));

@@ -4,7 +4,7 @@ fn main() {}
 mod proto2arrow_tests {
     use arrow::array::Array;
     use pretty_assertions::assert_eq;
-    use prost_examples::{example, example_builder};
+    use prost_examples::{example, example_builders};
 
     fn create_test_users() -> Vec<example::User> {
         let user1 = example::User {
@@ -124,13 +124,13 @@ mod proto2arrow_tests {
 
     #[test]
     fn builder_default() {
-        let _ = example_builder::UserBuilder::default();
+        let _ = example_builders::UserBuilder::default();
     }
 
     #[test]
     fn append_value_to_builder() {
         let users = create_test_users();
-        let mut ub = example_builder::UserBuilder::default();
+        let mut ub = example_builders::UserBuilder::default();
         ub.append_value(users.into_iter().next().unwrap());
         let user_array = ub.finish();
 
@@ -140,7 +140,7 @@ mod proto2arrow_tests {
 
     #[test]
     fn append_null_to_builder() {
-        let mut ub = example_builder::UserBuilder::default();
+        let mut ub = example_builders::UserBuilder::default();
         ub.append_null();
         let user_array = ub.finish();
 
@@ -151,7 +151,7 @@ mod proto2arrow_tests {
     #[test]
     fn extend_builder_with_multiple_values() {
         let users = create_test_users();
-        let mut ub = example_builder::UserBuilder::default();
+        let mut ub = example_builders::UserBuilder::default();
         ub.extend(users.into_iter().map(Some));
         let user_array = ub.finish();
 
@@ -162,7 +162,7 @@ mod proto2arrow_tests {
     #[test]
     fn finish_empties_builder_state() {
         let users = create_test_users();
-        let mut ub = example_builder::UserBuilder::default();
+        let mut ub = example_builders::UserBuilder::default();
         ub.extend(users.into_iter().map(Some));
         let user_array = ub.finish();
 
@@ -178,7 +178,7 @@ mod proto2arrow_tests {
     #[test]
     fn finish_cloned_preserves_builder_state() {
         let users = create_test_users();
-        let mut ub = example_builder::UserBuilder::default();
+        let mut ub = example_builders::UserBuilder::default();
         ub.extend(users.into_iter().map(Some));
         let user_array = ub.finish_cloned();
 
@@ -196,7 +196,7 @@ mod proto2arrow_tests {
         use arrow::datatypes::{DataType, Field, Fields};
         use std::sync::Arc;
 
-        let mut ub = example_builder::UserBuilder::default();
+        let mut ub = example_builders::UserBuilder::default();
         let user_array = ub.finish();
         let schema = user_array.fields();
 
@@ -284,7 +284,7 @@ mod proto2arrow_tests {
         use arrow::array::{Array, AsArray};
 
         let users = create_test_users();
-        let mut ub = example_builder::UserBuilder::default();
+        let mut ub = example_builders::UserBuilder::default();
         ub.extend(users.clone().into_iter().map(Some));
         let user_array = ub.finish();
 
