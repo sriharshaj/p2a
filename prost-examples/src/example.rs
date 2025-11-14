@@ -17,6 +17,7 @@ pub struct User {
     pub addresses: ::prost::alloc::vec::Vec<user::Address>,
     #[prost(message, repeated, tag = "10")]
     pub transactions: ::prost::alloc::vec::Vec<Transaction>,
+    /// map <string, PostType> user_string = 13;
     #[prost(map = "int32, message", tag = "11")]
     pub posts: ::std::collections::HashMap<i32, Post>,
     #[prost(oneof = "user::PaymentMethod", tags = "8, 9")]
@@ -117,4 +118,33 @@ pub struct BankAccount {
     pub routing_number: ::prost::alloc::string::String,
     #[prost(string, tag = "4")]
     pub bank_name: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PostType {
+    Science = 0,
+    Arts = 1,
+    Politics = 3,
+}
+impl PostType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Science => "SCIENCE",
+            Self::Arts => "ARTS",
+            Self::Politics => "POLITICS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SCIENCE" => Some(Self::Science),
+            "ARTS" => Some(Self::Arts),
+            "POLITICS" => Some(Self::Politics),
+            _ => None,
+        }
+    }
 }

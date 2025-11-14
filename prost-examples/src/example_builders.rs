@@ -5,7 +5,7 @@ pub struct UserBuilder {
     pub email: ::arrow::array::StringBuilder,
     pub age: ::arrow::array::UInt32Builder,
     pub is_active: ::arrow::array::BooleanBuilder,
-    pub r#type: ::arrow::array::Int32Builder,
+    pub r#type: ::arrow::array::StringBuilder,
     pub addresses: ::arrow::array::ListBuilder<user::AddressBuilder>,
     pub transactions: ::arrow::array::ListBuilder<TransactionBuilder>,
     pub posts: ::arrow::array::MapBuilder<::arrow::array::Int32Builder, PostBuilder>,
@@ -40,7 +40,12 @@ impl UserBuilder {
         self.email.append_value(record.email);
         self.age.append_value(record.age);
         self.is_active.append_value(record.is_active);
-        self.r#type.append_value(record.r#type);
+        self.r#type
+            .append_value(
+                crate::example::user::UserType::try_from(record.r#type)
+                    .unwrap()
+                    .as_str_name(),
+            );
         if record.addresses.is_empty() {
             self.addresses.append_null();
         } else {

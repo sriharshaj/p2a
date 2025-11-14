@@ -269,7 +269,7 @@ mod proto2arrow_tests {
             Field::new("email", DataType::Utf8, false),
             Field::new("age", DataType::UInt32, false),
             Field::new("is_active", DataType::Boolean, false),
-            Field::new("type", DataType::Int32, false),
+            Field::new("type", DataType::Utf8, false),
             addresses_list,
             transactions_list,
             posts_map,
@@ -308,7 +308,7 @@ mod proto2arrow_tests {
         let type_array = user_array
             .column_by_name("type")
             .unwrap()
-            .as_primitive::<arrow::datatypes::Int32Type>();
+            .as_string::<i32>();
         let addresses_array = user_array
             .column_by_name("addresses")
             .unwrap()
@@ -337,7 +337,10 @@ mod proto2arrow_tests {
         assert_eq!(email_array.value(0), "alice@example.com");
         assert_eq!(age_array.value(0), 25);
         assert!(is_active_array.value(0));
-        assert_eq!(type_array.value(0), 0);
+        assert_eq!(
+            type_array.value(0),
+            example::user::UserType::Reader.as_str_name()
+        );
 
         let alice_addresses = addresses_array.value(0);
         assert_eq!(alice_addresses.len(), 2);
@@ -402,7 +405,10 @@ mod proto2arrow_tests {
         assert_eq!(email_array.value(1), "bob@example.com");
         assert_eq!(age_array.value(1), 30);
         assert!(!is_active_array.value(1));
-        assert_eq!(type_array.value(1), 1);
+        assert_eq!(
+            type_array.value(1),
+            example::user::UserType::Author.as_str_name()
+        );
 
         let bob_addresses = addresses_array.value(1);
         assert_eq!(bob_addresses.len(), 1);
@@ -504,7 +510,10 @@ mod proto2arrow_tests {
         assert_eq!(email_array.value(2), "charlie@example.com");
         assert_eq!(age_array.value(2), 28);
         assert!(is_active_array.value(2));
-        assert_eq!(type_array.value(2), 2);
+        assert_eq!(
+            type_array.value(2),
+            example::user::UserType::Editor.as_str_name()
+        );
 
         assert!(addresses_array.is_null(2));
 
