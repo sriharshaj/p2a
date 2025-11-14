@@ -90,12 +90,12 @@ fn is_option(full_ident: &str) -> bool {
 fn parse_generic_argument(
     argument: &syn::GenericArgument,
     enum_path: Option<syn::Path>,
-) -> Result<syn::Type, syn::Error> {
+) -> Result<(syn::Type, FieldRule, ProtoType), syn::Error> {
     if let syn::GenericArgument::Type(ty) = argument
         && let syn::Type::Path(type_path) = ty
     {
-        let (t, _, _) = parse_type(enum_path, type_path.to_owned())?;
-        Ok(syn::parse_quote!(#t))
+        let (t, fr, pt) = parse_type(enum_path, type_path.to_owned())?;
+        Ok((syn::parse_quote!(#t), fr, pt))
     } else {
         Err(syn::Error::new(
             argument.span(),
@@ -107,7 +107,7 @@ fn parse_generic_argument(
 fn parse_single_arg_path(
     arguments: &syn::PathArguments,
     enum_path: Option<syn::Path>,
-) -> Result<syn::Type, syn::Error> {
+) -> Result<(syn::Type, FieldRule, ProtoType), syn::Error> {
     if let syn::PathArguments::AngleBracketed(args) = arguments
         && let Some(first_arg) = args.args.first()
     {
@@ -122,7 +122,13 @@ fn parse_single_arg_path(
 
 fn parse_two_args_path(
     arguments: &syn::PathArguments,
-) -> Result<(syn::Type, syn::Type), syn::Error> {
+) -> Result<
+    (
+        (syn::Type, FieldRule, ProtoType),
+        (syn::Type, FieldRule, ProtoType),
+    ),
+    syn::Error,
+> {
     if let syn::PathArguments::AngleBracketed(args) = arguments
         && args.args.len() == 2
     {
@@ -215,11 +221,8 @@ pub fn parse_type(
             ProtoType::Scalar,
         ))
     } else if is_option(&full_path) {
-        Ok((
-            parse_single_arg_path(&last_segment.arguments, enum_path)?,
-            FieldRule::Optional,
-            ProtoType::Scalar,
-        ))
+        let (t, _, _) = parse_single_arg_path(&last_segment.arguments, enum_path)?;
+        Ok((t, FieldRule::Optional, ProtoType::Scalar))
     } else if is_string_type(&full_path) {
         Ok((
             syn::parse_quote!(::arrow::array::StringBuilder),
@@ -227,7 +230,7 @@ pub fn parse_type(
             ProtoType::Scalar,
         ))
     } else if is_vec_type(&full_path) {
-        let t = parse_single_arg_path(&last_segment.arguments, enum_path)?;
+        let (t, _, pt) = parse_single_arg_path(&last_segment.arguments, enum_path)?;
         if let syn::Type::Path(type_path) = &t {
             let full_path = get_full_path(type_path);
             if full_path == "::arrow::array::BinaryBuilder" {
@@ -238,7 +241,7 @@ pub fn parse_type(
         Ok((
             syn::parse_quote!(::arrow::array::ListBuilder<#t>),
             FieldRule::Repeated,
-            ProtoType::Scalar,
+            pt,
         ))
     } else if is_box_type(&full_path) {
         Err(syn::Error::new(
@@ -246,7 +249,7 @@ pub fn parse_type(
             "Box types are not yet supported",
         ))
     } else if is_hash_map_type(&full_path) {
-        let (k, v) = parse_two_args_path(&last_segment.arguments)?;
+        let ((k, _, _), (v, _, _)) = parse_two_args_path(&last_segment.arguments)?;
         let t = syn::parse_quote!(::arrow::array::MapBuilder<#k,#v>);
         Ok((t, FieldRule::Required, ProtoType::Map))
     } else {
@@ -298,8 +301,7 @@ fn is_enum_proto_type(attrs: Vec<syn::Attribute>, namespace: &str) -> Option<syn
         let mut tp_iter = type_path.trim().trim_matches('"').rsplit("::");
         let mut enum_path = String::from(tp_iter.next().unwrap());
         for s in tp_iter {
-            if s == "super" {
-                n_iter.next();
+            if s == "super" && n_iter.next().is_some() {
                 continue;
             }
             enum_path = format!("{}::{}", s, enum_path);
@@ -436,11 +438,29 @@ impl Field {
                     }
                 }
             }
-            ProtoType::Enum(enum_path) => {
-                syn::parse_quote! {
-                  self.#field_ident.append_value(#enum_path::try_from(#field_expr).unwrap().as_str_name());
+            ProtoType::Enum(enum_path) => match self.field_rule {
+                FieldRule::Required => {
+                    syn::parse_quote! {
+                      self.#field_ident.append_value(#enum_path::try_from(#field_expr).unwrap().as_str_name());
+                    }
                 }
-            }
+                FieldRule::Optional => {
+                    syn::parse_quote! {
+                        self.#field_ident.append_option(#field_expr);
+                    }
+                }
+                FieldRule::Repeated => {
+                    syn::parse_quote! {
+                        if #field_expr.is_empty() {
+                            self.#field_ident.append_null();
+                        } else {
+                            self.#field_ident.append_value(#field_expr.into_iter().map(|v| {
+                              Some(#enum_path::try_from(v).unwrap().as_str_name())
+                            }));
+                        }
+                    }
+                }
+            },
             _ => match self.field_rule {
                 FieldRule::Required => {
                     syn::parse_quote! {

@@ -16,7 +16,9 @@ message User {
     }
     repeated Transaction transactions = 10;
     map <int32, Post> posts = 11;
+    // repeated PostType post_types = 12;
     // map <string, PostType> user_string = 13;
+    // repeated PostType post_types = 14;
 
     enum UserType {
         READER = 0;
