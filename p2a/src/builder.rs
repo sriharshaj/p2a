@@ -294,15 +294,22 @@ fn is_enum_proto_type(attrs: Vec<syn::Attribute>, namespace: &str) -> Option<syn
 
     let (proto_type, type_path) = first_arg.split_once("=").unwrap_or((first_arg, ""));
     if proto_type.trim() == "enumeration" {
-        println!("{}", type_path);
-        return Some(
-            syn::parse_str(&format!(
-                "{}::{}",
-                namespace,
-                type_path.trim().trim_matches('"')
-            ))
-            .unwrap(),
-        );
+        let mut n_iter = namespace.rsplit("::");
+        let mut tp_iter = type_path.trim().trim_matches('"').rsplit("::");
+        let mut enum_path = String::from(tp_iter.next().unwrap());
+        for s in tp_iter {
+            if s == "super" {
+                n_iter.next();
+                continue;
+            }
+            enum_path = format!("{}::{}", s, enum_path);
+        }
+        for s in n_iter {
+            enum_path = format!("{}::{}", s, enum_path);
+        }
+
+        println!("{}", enum_path);
+        return Some(syn::parse_str(&enum_path).unwrap());
     }
     None
 }
@@ -317,7 +324,6 @@ pub fn generate_fields_from_struct(
         let mut field = field.clone();
 
         let enum_path = is_enum_proto_type(field.attrs, namespace);
-        println!("{:?}", enum_path);
         field.attrs = Vec::new();
         let (ty, field_rule, proto_type) = match field.ty {
             syn::Type::Path(type_path) => parse_type(enum_path, type_path)?,
