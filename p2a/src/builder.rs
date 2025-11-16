@@ -122,20 +122,14 @@ fn parse_single_arg_path(
 
 fn parse_two_args_path(
     arguments: &syn::PathArguments,
-) -> Result<
-    (
-        (syn::Type, FieldRule, ProtoType),
-        (syn::Type, FieldRule, ProtoType),
-    ),
-    syn::Error,
-> {
+) -> Result<[(syn::Type, FieldRule, ProtoType); 2], syn::Error> {
     if let syn::PathArguments::AngleBracketed(args) = arguments
         && args.args.len() == 2
     {
-        Ok((
+        Ok([
             parse_generic_argument(&args.args[0], None)?,
             parse_generic_argument(&args.args[1], None)?,
-        ))
+        ])
     } else {
         Err(syn::Error::new(
             arguments.span(),
@@ -249,7 +243,7 @@ pub fn parse_type(
             "Box types are not yet supported",
         ))
     } else if is_hash_map_type(&full_path) {
-        let ((k, _, _), (v, _, _)) = parse_two_args_path(&last_segment.arguments)?;
+        let [(k, _, _), (v, _, _)] = parse_two_args_path(&last_segment.arguments)?;
         let t = syn::parse_quote!(::arrow::array::MapBuilder<#k,#v>);
         Ok((t, FieldRule::Required, ProtoType::Map))
     } else {
