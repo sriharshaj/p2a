@@ -441,9 +441,9 @@ impl Field {
             ProtoType::Enum(enum_path) => match self.field_rule {
                 FieldRule::Required => {
                     syn::parse_quote! {
-                      self.#field_ident.append_value(
-                        #enum_path::try_from(#field_expr).unwrap_or_default().as_str_name()
-                      );
+                        self.#field_ident.append_value(
+                            #enum_path::try_from(#field_expr).unwrap_or_default().as_str_name()
+                        );
                     }
                 }
                 FieldRule::Optional => {
@@ -457,7 +457,7 @@ impl Field {
                             self.#field_ident.append_null();
                         } else {
                             self.#field_ident.append_value(#field_expr.into_iter().map(|v| {
-                              Some(#enum_path::try_from(v).unwrap_or_default().as_str_name())
+                                Some(#enum_path::try_from(v).unwrap_or_default().as_str_name())
                             }));
                         }
                     }
@@ -670,7 +670,7 @@ impl Builder {
                     }
                     _ => {
                         syn::parse_quote! {
-                          self.#ident.append_null();
+                            self.#ident.append_null();
                         }
                     }
                 }

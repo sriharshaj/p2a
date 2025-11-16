@@ -19,7 +19,6 @@ pub struct User {
     pub transactions: ::prost::alloc::vec::Vec<Transaction>,
     /// repeated PostType post_types = 12;
     /// map <string, PostType> user_string = 13;
-    /// repeated PostType post_types = 14;
     #[prost(map = "int32, message", tag = "11")]
     pub posts: ::std::collections::HashMap<i32, Post>,
     #[prost(oneof = "user::PaymentMethod", tags = "8, 9")]
