@@ -43,7 +43,7 @@ impl UserBuilder {
         self.r#type
             .append_value(
                 crate::example::user::UserType::try_from(record.r#type)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_str_name(),
             );
         if record.addresses.is_empty() {
