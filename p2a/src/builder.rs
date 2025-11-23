@@ -1,7 +1,8 @@
 use heck::ToSnakeCase;
 use quote::ToTokens;
-use std::error;
 use syn::spanned::Spanned;
+
+use crate::parser::{self, ProstAttribute};
 
 fn oneof_enum(item: &syn::ItemEnum) -> bool {
     //TODO: change later to proper code
@@ -17,7 +18,7 @@ fn oneof_enum(item: &syn::ItemEnum) -> bool {
 pub(super) fn generate_arrow_builders(
     proto_items: Vec<syn::Item>,
     namespace: &str,
-) -> Result<Vec<syn::Item>, Box<dyn error::Error>> {
+) -> syn::Result<Vec<syn::Item>> {
     let mut builder_items: Vec<syn::Item> = Vec::new();
 
     for item in proto_items {
@@ -89,13 +90,13 @@ fn is_option(full_ident: &str) -> bool {
 
 fn parse_generic_argument(
     argument: &syn::GenericArgument,
-    enum_path: Option<syn::Path>,
-) -> Result<(syn::Type, FieldRule, ProtoType), syn::Error> {
+    proto_type: &parser::Type,
+) -> syn::Result<syn::Type> {
     if let syn::GenericArgument::Type(ty) = argument
         && let syn::Type::Path(type_path) = ty
     {
-        let (t, fr, pt) = parse_type(enum_path, type_path.to_owned())?;
-        Ok((syn::parse_quote!(#t), fr, pt))
+        let t = parse_type(type_path.to_owned(), proto_type)?;
+        Ok(syn::parse_quote!(#t))
     } else {
         Err(syn::Error::new(
             argument.span(),
@@ -106,12 +107,12 @@ fn parse_generic_argument(
 
 fn parse_single_arg_path(
     arguments: &syn::PathArguments,
-    enum_path: Option<syn::Path>,
-) -> Result<(syn::Type, FieldRule, ProtoType), syn::Error> {
+    proto_type: &parser::Type,
+) -> syn::Result<syn::Type> {
     if let syn::PathArguments::AngleBracketed(args) = arguments
         && let Some(first_arg) = args.args.first()
     {
-        parse_generic_argument(first_arg, enum_path)
+        parse_generic_argument(first_arg, proto_type)
     } else {
         Err(syn::Error::new(
             arguments.span(),
@@ -122,13 +123,15 @@ fn parse_single_arg_path(
 
 fn parse_two_args_path(
     arguments: &syn::PathArguments,
-) -> Result<[(syn::Type, FieldRule, ProtoType); 2], syn::Error> {
+    key_proto_type: &parser::Type,
+    value_proto_type: &parser::Type,
+) -> syn::Result<[syn::Type; 2]> {
     if let syn::PathArguments::AngleBracketed(args) = arguments
         && args.args.len() == 2
     {
         Ok([
-            parse_generic_argument(&args.args[0], None)?,
-            parse_generic_argument(&args.args[1], None)?,
+            parse_generic_argument(&args.args[0], key_proto_type)?,
+            parse_generic_argument(&args.args[1], value_proto_type)?,
         ])
     } else {
         Err(syn::Error::new(
@@ -139,9 +142,9 @@ fn parse_two_args_path(
 }
 
 pub fn parse_type(
-    enum_path: Option<syn::Path>,
     mut type_path: syn::TypePath,
-) -> Result<(syn::Type, FieldRule, ProtoType), syn::Error> {
+    proto_type: &parser::Type,
+) -> syn::Result<syn::Type> {
     let full_path = get_full_path(&type_path);
     let last_segment = match type_path.path.segments.pop() {
         Some(syn::punctuated::Pair::End(segment)) => segment,
@@ -160,92 +163,45 @@ pub fn parse_type(
     };
 
     if full_path == "bool" {
-        Ok((
-            syn::parse_quote!(::arrow::array::BooleanBuilder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
+        Ok(syn::parse_quote!(::arrow::array::BooleanBuilder))
     } else if full_path == "f32" {
-        Ok((
-            syn::parse_quote!(::arrow::array::Float32Builder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
+        Ok(syn::parse_quote!(::arrow::array::Float32Builder))
     } else if full_path == "f64" {
-        Ok((
-            syn::parse_quote!(::arrow::array::Float64Builder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
+        Ok(syn::parse_quote!(::arrow::array::Float64Builder))
     } else if full_path == "i32" {
-        if let Some(enum_path) = enum_path {
-            return Ok((
-                syn::parse_quote!(::arrow::array::StringBuilder),
-                FieldRule::Required,
-                ProtoType::Enum(enum_path),
-            ));
+        if let parser::Type::Enum(_) = proto_type {
+            return Ok(syn::parse_quote!(::arrow::array::StringBuilder));
         }
-        Ok((
-            syn::parse_quote!(::arrow::array::Int32Builder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
+        Ok(syn::parse_quote!(::arrow::array::Int32Builder))
     } else if full_path == "i64" {
-        Ok((
-            syn::parse_quote!(::arrow::array::Int64Builder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
-    } else if full_path == "u8" {
-        Ok((
-            syn::parse_quote!(::arrow::array::BinaryBuilder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
+        Ok(syn::parse_quote!(::arrow::array::Int64Builder))
     } else if full_path == "u32" {
-        Ok((
-            syn::parse_quote!(::arrow::array::UInt32Builder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
+        Ok(syn::parse_quote!(::arrow::array::UInt32Builder))
     } else if full_path == "u64" {
-        Ok((
-            syn::parse_quote!(::arrow::array::UInt64Builder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
+        Ok(syn::parse_quote!(::arrow::array::UInt64Builder))
     } else if is_option(&full_path) {
-        let (t, _, _) = parse_single_arg_path(&last_segment.arguments, enum_path)?;
-        Ok((t, FieldRule::Optional, ProtoType::Scalar))
+        let t = parse_single_arg_path(&last_segment.arguments, proto_type)?;
+        Ok(t)
     } else if is_string_type(&full_path) {
-        Ok((
-            syn::parse_quote!(::arrow::array::StringBuilder),
-            FieldRule::Required,
-            ProtoType::Scalar,
-        ))
+        Ok(syn::parse_quote!(::arrow::array::StringBuilder))
     } else if is_vec_type(&full_path) {
-        let (t, _, pt) = parse_single_arg_path(&last_segment.arguments, enum_path)?;
-        if let syn::Type::Path(type_path) = &t {
-            let full_path = get_full_path(type_path);
-            if full_path == "::arrow::array::BinaryBuilder" {
-                return Ok((t, FieldRule::Required, ProtoType::Scalar));
-            }
+        if let parser::Type::Bytes = proto_type {
+            return Ok(syn::parse_quote!(::arrow::array::BinaryBuilder));
         }
 
-        Ok((
-            syn::parse_quote!(::arrow::array::ListBuilder<#t>),
-            FieldRule::Repeated,
-            pt,
-        ))
+        let t = parse_single_arg_path(&last_segment.arguments, proto_type)?;
+        Ok(syn::parse_quote!(::arrow::array::ListBuilder<#t>))
     } else if is_box_type(&full_path) {
         Err(syn::Error::new(
             type_path.span(),
             "Box types are not yet supported",
         ))
-    } else if is_hash_map_type(&full_path) {
-        let [(k, _, _), (v, _, _)] = parse_two_args_path(&last_segment.arguments)?;
+    } else if is_hash_map_type(&full_path)
+        && let parser::Type::Map(key_type, value_type) = proto_type
+    {
+        let [k, v] = parse_two_args_path(&last_segment.arguments, key_type, value_type)?;
         let t = syn::parse_quote!(::arrow::array::MapBuilder<#k,#v>);
-        Ok((t, FieldRule::Required, ProtoType::Map))
+        Ok(t)
     } else {
         let segment = syn::PathSegment {
             ident: syn::Ident::new(
@@ -256,25 +212,21 @@ pub fn parse_type(
         };
 
         type_path.path.segments.push(segment);
-        Ok((
-            syn::parse_quote!(#type_path),
-            FieldRule::Required,
-            ProtoType::Message,
-        ))
+        Ok(syn::parse_quote!(#type_path))
     }
 }
 
-fn is_enum_proto_type(attrs: Vec<syn::Attribute>, namespace: &str) -> Option<syn::Path> {
+fn parse_attribute(attrs: &[syn::Attribute], namespace: &str) -> syn::Result<ProstAttribute> {
     if attrs.is_empty() {
         panic!("expected atleast one attribute");
     }
-    let attr = attrs.last().unwrap().to_owned();
+    let attr = attrs.last().unwrap();
 
     if attr.style != syn::AttrStyle::Outer {
         panic!("expected outer attribute style");
     }
 
-    let meta_list = match attr.meta {
+    let meta_list = match &attr.meta {
         syn::Meta::List(list) => list,
         _ => panic!("expected meta list"),
     };
@@ -284,54 +236,34 @@ fn is_enum_proto_type(attrs: Vec<syn::Attribute>, namespace: &str) -> Option<syn
         panic!("expected meta to start with prost, got: {}", path);
     }
 
-    let args_list = meta_list.tokens.to_string();
-    let (first_arg, _) = args_list
-        .split_once(",")
-        .expect("expected two args inside meta list");
-
-    let (proto_type, type_path) = first_arg.split_once("=").unwrap_or((first_arg, ""));
-    if proto_type.trim() == "enumeration" {
-        let mut n_iter = namespace.rsplit("::");
-        let mut tp_iter = type_path.trim().trim_matches('"').rsplit("::");
-        let mut enum_path = String::from(tp_iter.next().unwrap());
-        for s in tp_iter {
-            if s == "super" && n_iter.next().is_some() {
-                continue;
-            }
-            enum_path = format!("{}::{}", s, enum_path);
-        }
-        for s in n_iter {
-            enum_path = format!("{}::{}", s, enum_path);
-        }
-
-        println!("{}", enum_path);
-        return Some(syn::parse_str(&enum_path).unwrap());
-    }
-    None
+    syn::parse::Parser::parse2(
+        |input: syn::parse::ParseStream| ProstAttribute::parse_with_namespace(input, namespace),
+        meta_list.tokens.clone(),
+    )
 }
 
 pub fn generate_fields_from_struct(
     item_struct: &syn::ItemStruct,
     namespace: &str,
-) -> Result<Vec<Field>, Box<dyn error::Error>> {
+) -> syn::Result<Vec<Field>> {
     let mut fc: Vec<Field> = Vec::with_capacity(item_struct.fields.iter().len());
 
     for field in item_struct.fields.iter() {
         let mut field = field.clone();
 
-        let enum_path = is_enum_proto_type(field.attrs, namespace);
+        let prost_attr = parse_attribute(&field.attrs, namespace)?;
         field.attrs = Vec::new();
-        let (ty, field_rule, proto_type) = match field.ty {
-            syn::Type::Path(type_path) => parse_type(enum_path, type_path)?,
+        let ty = match field.ty {
+            syn::Type::Path(type_path) => parse_type(type_path, &prost_attr.r#type)?,
             _ => {
-                return Err("Expected protobuf compatible type".into());
+                panic!("Expected protobuf compatible type");
             }
         };
         field.ty = ty;
         fc.push(Field {
             value: field,
-            field_rule,
-            proto_type,
+            proto_cardinality: prost_attr.cardinality,
+            proto_type: prost_attr.r#type,
             enum_variant: None,
         });
     }
@@ -342,7 +274,8 @@ pub fn generate_fields_from_struct(
 fn generate_field_from_enum_variant(
     vis: &syn::Visibility,
     variant: &syn::Variant,
-) -> Result<Field, syn::Error> {
+    namespace: &str,
+) -> syn::Result<Field> {
     if variant.fields.len() != 1 {
         return Err(syn::Error::new(
             variant.ident.span(),
@@ -356,6 +289,7 @@ fn generate_field_from_enum_variant(
 
     let mut field = variant.fields.iter().next().unwrap().clone();
 
+    let prost_attr = parse_attribute(&variant.attrs, namespace)?;
     field.attrs = Vec::new();
     field.vis = vis.clone();
     field.colon_token = Some(syn::token::Colon::default());
@@ -364,8 +298,8 @@ fn generate_field_from_enum_variant(
         variant.ident.span(),
     ));
 
-    let (ty, field_rule, proto_type) = match field.ty {
-        syn::Type::Path(type_path) => parse_type(None, type_path)?,
+    let ty = match field.ty {
+        syn::Type::Path(type_path) => parse_type(type_path, &prost_attr.r#type)?,
         _ => {
             return Err(syn::Error::new(
                 field.ty.span(),
@@ -377,32 +311,17 @@ fn generate_field_from_enum_variant(
 
     Ok(Field {
         value: field,
-        field_rule,
-        proto_type,
+        proto_cardinality: prost_attr.cardinality,
+        proto_type: prost_attr.r#type,
         enum_variant: Some(variant.ident.clone()),
     })
 }
 
 #[derive(PartialEq)]
-pub enum FieldRule {
-    Optional,
-    Repeated,
-    Required,
-}
-
-#[derive(PartialEq)]
-pub enum ProtoType {
-    #[allow(dead_code)]
-    Enum(syn::Path),
-    Message,
-    Scalar,
-    Map,
-}
-
 pub struct Field {
     pub value: syn::Field,
-    pub field_rule: FieldRule,
-    pub proto_type: ProtoType,
+    pub proto_cardinality: parser::Cardinality,
+    pub proto_type: parser::Type,
     pub enum_variant: Option<syn::Ident>,
 }
 
@@ -419,33 +338,47 @@ impl Field {
         };
 
         match &self.proto_type {
-            ProtoType::Map => {
+            parser::Type::Map(_, value_field) => {
+                let val: syn::Ident = syn::parse_quote!(val);
+                let value_append_stmt: syn::Stmt =
+                    if let parser::Type::Enum(enum_path) = value_field.as_ref() {
+                        syn::parse_quote! {
+                            self.#field_ident.values().append_value(
+                                #enum_path::try_from(#val).unwrap_or_default().as_str_name()
+                            );
+                        }
+                    } else {
+                        syn::parse_quote! {
+                            self.#field_ident.values().append_value(#val);
+                        }
+                    };
+
                 syn::parse_quote! {
                     if #field_expr.is_empty() {
                         let _ = self.#field_ident.append(false);
                     } else {
-                        for (key, val) in #field_expr.into_iter() {
+                        for (key, #val) in #field_expr.into_iter() {
                             self.#field_ident.keys().append_value(key);
-                            self.#field_ident.values().append_value(val);
+                            #value_append_stmt
                         }
                         let _ = self.#field_ident.append(true);
                     }
                 }
             }
-            ProtoType::Enum(enum_path) => match self.field_rule {
-                FieldRule::Required => {
+            parser::Type::Enum(enum_path) => match self.proto_cardinality {
+                parser::Cardinality::Singular => {
                     syn::parse_quote! {
                         self.#field_ident.append_value(
                             #enum_path::try_from(#field_expr).unwrap_or_default().as_str_name()
                         );
                     }
                 }
-                FieldRule::Optional => {
+                parser::Cardinality::Optional => {
                     syn::parse_quote! {
                         self.#field_ident.append_option(#field_expr);
                     }
                 }
-                FieldRule::Repeated => {
+                parser::Cardinality::Repeated => {
                     syn::parse_quote! {
                         if #field_expr.is_empty() {
                             self.#field_ident.append_null();
@@ -457,18 +390,18 @@ impl Field {
                     }
                 }
             },
-            _ => match self.field_rule {
-                FieldRule::Required => {
+            _ => match self.proto_cardinality {
+                parser::Cardinality::Singular => {
                     syn::parse_quote! {
                         self.#field_ident.append_value(#field_expr);
                     }
                 }
-                FieldRule::Optional => {
+                parser::Cardinality::Optional => {
                     syn::parse_quote! {
                         self.#field_ident.append_option(#field_expr);
                     }
                 }
-                FieldRule::Repeated => {
+                parser::Cardinality::Repeated => {
                     syn::parse_quote! {
                         if #field_expr.is_empty() {
                             self.#field_ident.append_null();
@@ -495,11 +428,9 @@ pub struct Builder {
 }
 
 impl TryFrom<(&syn::ItemStruct, &str)> for Builder {
-    type Error = Box<dyn error::Error>;
-    fn try_from((value, namespace): (&syn::ItemStruct, &str)) -> Result<Self, Self::Error> {
+    type Error = syn::Error;
+    fn try_from((value, namespace): (&syn::ItemStruct, &str)) -> syn::Result<Self> {
         let fields = generate_fields_from_struct(value, namespace)?;
-        // let message: syn::Ident = syn::parse_str(&format!("{}::{}", namespace, value.ident))
-        //     .map_err(|e| format!("Failed to parse {}::{}", namespace, value.ident))?;
         Ok(Builder {
             message: syn::parse_str(&format!("{}::{}", namespace, value.ident))?,
             message_instance: syn::parse_quote!(record),
@@ -514,14 +445,12 @@ impl TryFrom<(&syn::ItemStruct, &str)> for Builder {
 }
 
 impl TryFrom<(&syn::ItemEnum, &str)> for Builder {
-    type Error = Box<dyn error::Error>;
-    fn try_from((value, namespace): (&syn::ItemEnum, &str)) -> Result<Self, Self::Error> {
+    type Error = syn::Error;
+    fn try_from((value, namespace): (&syn::ItemEnum, &str)) -> syn::Result<Self> {
         let mut fields = Vec::new();
         for v in &value.variants {
-            fields.push(generate_field_from_enum_variant(&value.vis, v)?);
+            fields.push(generate_field_from_enum_variant(&value.vis, v, namespace)?);
         }
-        // let message: syn::Ident = syn::parse_str(&format!("{}::{}", namespace, value.ident))
-        //     .map_err(|e| format!("Failed to parse {}::{}", namespace, value.ident))?;
         Ok(Builder {
             message: syn::parse_str(&format!("{}::{}", namespace, value.ident))?,
             message_instance: syn::parse_quote!(record),
@@ -657,7 +586,7 @@ impl Builder {
             .map(|f| {
                 let ident = f.value.ident.clone().unwrap();
                 match f.proto_type {
-                    ProtoType::Map => {
+                    parser::Type::Map(_, _) => {
                         syn::parse_quote! {
                             let _ = self.#ident.append(false);
                         }
@@ -711,8 +640,8 @@ impl Builder {
 
                 let is_nullable = match self.message_type {
                     MessageType::Struct => match field.proto_type {
-                        ProtoType::Map => true,
-                        _ => !(field.field_rule == FieldRule::Required),
+                        parser::Type::Map(_, _) => true,
+                        _ => !(field.proto_cardinality == parser::Cardinality::Singular),
                     },
                     MessageType::Enum => true,
                 };
@@ -753,7 +682,7 @@ impl Builder {
             .fields
             .iter()
             .map(|f| match f.proto_type {
-                ProtoType::Map => {
+                parser::Type::Map(_, _) => {
                     let ident = f.value.ident.clone().unwrap();
                     syn::FieldValue {
                         attrs: Vec::new(),

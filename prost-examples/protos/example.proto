@@ -18,6 +18,7 @@ message User {
     map <int32, Post> posts = 11;
     // repeated PostType post_types = 12;
     // map <string, PostType> user_string = 13;
+    // map <int32, BankAccount> bank = 14;
 
     enum UserType {
         READER = 0;
