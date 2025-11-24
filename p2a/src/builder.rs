@@ -2,7 +2,7 @@ use heck::ToSnakeCase;
 use quote::ToTokens;
 use syn::spanned::Spanned;
 
-use crate::parser::{self, ProstAttribute};
+use crate::proto;
 
 fn oneof_enum(item: &syn::ItemEnum) -> bool {
     //TODO: change later to proper code
@@ -90,7 +90,7 @@ fn is_option(full_ident: &str) -> bool {
 
 fn parse_generic_argument(
     argument: &syn::GenericArgument,
-    proto_type: &parser::Type,
+    proto_type: &proto::Type,
 ) -> syn::Result<syn::Type> {
     if let syn::GenericArgument::Type(ty) = argument
         && let syn::Type::Path(type_path) = ty
@@ -107,7 +107,7 @@ fn parse_generic_argument(
 
 fn parse_single_arg_path(
     arguments: &syn::PathArguments,
-    proto_type: &parser::Type,
+    proto_type: &proto::Type,
 ) -> syn::Result<syn::Type> {
     if let syn::PathArguments::AngleBracketed(args) = arguments
         && let Some(first_arg) = args.args.first()
@@ -123,8 +123,8 @@ fn parse_single_arg_path(
 
 fn parse_two_args_path(
     arguments: &syn::PathArguments,
-    key_proto_type: &parser::Type,
-    value_proto_type: &parser::Type,
+    key_proto_type: &proto::Type,
+    value_proto_type: &proto::Type,
 ) -> syn::Result<[syn::Type; 2]> {
     if let syn::PathArguments::AngleBracketed(args) = arguments
         && args.args.len() == 2
@@ -143,7 +143,7 @@ fn parse_two_args_path(
 
 pub fn parse_type(
     mut type_path: syn::TypePath,
-    proto_type: &parser::Type,
+    proto_type: &proto::Type,
 ) -> syn::Result<syn::Type> {
     let full_path = get_full_path(&type_path);
     let last_segment = match type_path.path.segments.pop() {
@@ -169,7 +169,7 @@ pub fn parse_type(
     } else if full_path == "f64" {
         Ok(syn::parse_quote!(::arrow::array::Float64Builder))
     } else if full_path == "i32" {
-        if let parser::Type::Enum(_) = proto_type {
+        if let proto::Type::Enum(_) = proto_type {
             return Ok(syn::parse_quote!(::arrow::array::StringBuilder));
         }
         Ok(syn::parse_quote!(::arrow::array::Int32Builder))
@@ -185,7 +185,7 @@ pub fn parse_type(
     } else if is_string_type(&full_path) {
         Ok(syn::parse_quote!(::arrow::array::StringBuilder))
     } else if is_vec_type(&full_path) {
-        if let parser::Type::Bytes = proto_type {
+        if let proto::Type::Bytes = proto_type {
             return Ok(syn::parse_quote!(::arrow::array::BinaryBuilder));
         }
 
@@ -197,7 +197,7 @@ pub fn parse_type(
             "Box types are not yet supported",
         ))
     } else if is_hash_map_type(&full_path)
-        && let parser::Type::Map(key_type, value_type) = proto_type
+        && let proto::Type::Map(key_type, value_type) = proto_type
     {
         let [k, v] = parse_two_args_path(&last_segment.arguments, key_type, value_type)?;
         let t = syn::parse_quote!(::arrow::array::MapBuilder<#k,#v>);
@@ -216,7 +216,7 @@ pub fn parse_type(
     }
 }
 
-fn parse_attribute(attrs: &[syn::Attribute], namespace: &str) -> syn::Result<ProstAttribute> {
+fn parse_attribute(attrs: &[syn::Attribute], namespace: &str) -> syn::Result<proto::Field> {
     if attrs.is_empty() {
         panic!("expected atleast one attribute");
     }
@@ -237,7 +237,7 @@ fn parse_attribute(attrs: &[syn::Attribute], namespace: &str) -> syn::Result<Pro
     }
 
     syn::parse::Parser::parse2(
-        |input: syn::parse::ParseStream| ProstAttribute::parse_with_namespace(input, namespace),
+        |input: syn::parse::ParseStream| proto::Field::parse_with_namespace(input, namespace),
         meta_list.tokens.clone(),
     )
 }
@@ -317,11 +317,10 @@ fn generate_field_from_enum_variant(
     })
 }
 
-#[derive(PartialEq)]
 pub struct Field {
     pub value: syn::Field,
-    pub proto_cardinality: parser::Cardinality,
-    pub proto_type: parser::Type,
+    pub proto_cardinality: proto::Cardinality,
+    pub proto_type: proto::Type,
     pub enum_variant: Option<syn::Ident>,
 }
 
@@ -338,10 +337,10 @@ impl Field {
         };
 
         match &self.proto_type {
-            parser::Type::Map(_, value_field) => {
+            proto::Type::Map(_, value_field) => {
                 let val: syn::Ident = syn::parse_quote!(val);
                 let value_append_stmt: syn::Stmt =
-                    if let parser::Type::Enum(enum_path) = value_field.as_ref() {
+                    if let proto::Type::Enum(enum_path) = value_field.as_ref() {
                         syn::parse_quote! {
                             self.#field_ident.values().append_value(
                                 #enum_path::try_from(#val).unwrap_or_default().as_str_name()
@@ -365,20 +364,20 @@ impl Field {
                     }
                 }
             }
-            parser::Type::Enum(enum_path) => match self.proto_cardinality {
-                parser::Cardinality::Singular => {
+            proto::Type::Enum(enum_path) => match self.proto_cardinality {
+                proto::Cardinality::Singular => {
                     syn::parse_quote! {
                         self.#field_ident.append_value(
                             #enum_path::try_from(#field_expr).unwrap_or_default().as_str_name()
                         );
                     }
                 }
-                parser::Cardinality::Optional => {
+                proto::Cardinality::Optional => {
                     syn::parse_quote! {
                         self.#field_ident.append_option(#field_expr);
                     }
                 }
-                parser::Cardinality::Repeated => {
+                proto::Cardinality::Repeated => {
                     syn::parse_quote! {
                         if #field_expr.is_empty() {
                             self.#field_ident.append_null();
@@ -391,17 +390,17 @@ impl Field {
                 }
             },
             _ => match self.proto_cardinality {
-                parser::Cardinality::Singular => {
+                proto::Cardinality::Singular => {
                     syn::parse_quote! {
                         self.#field_ident.append_value(#field_expr);
                     }
                 }
-                parser::Cardinality::Optional => {
+                proto::Cardinality::Optional => {
                     syn::parse_quote! {
                         self.#field_ident.append_option(#field_expr);
                     }
                 }
-                parser::Cardinality::Repeated => {
+                proto::Cardinality::Repeated => {
                     syn::parse_quote! {
                         if #field_expr.is_empty() {
                             self.#field_ident.append_null();
@@ -586,7 +585,7 @@ impl Builder {
             .map(|f| {
                 let ident = f.value.ident.clone().unwrap();
                 match f.proto_type {
-                    parser::Type::Map(_, _) => {
+                    proto::Type::Map(_, _) => {
                         syn::parse_quote! {
                             let _ = self.#ident.append(false);
                         }
@@ -640,8 +639,8 @@ impl Builder {
 
                 let is_nullable = match self.message_type {
                     MessageType::Struct => match field.proto_type {
-                        parser::Type::Map(_, _) => true,
-                        _ => !(field.proto_cardinality == parser::Cardinality::Singular),
+                        proto::Type::Map(_, _) => true,
+                        _ => !(field.proto_cardinality == proto::Cardinality::Singular),
                     },
                     MessageType::Enum => true,
                 };
@@ -682,7 +681,7 @@ impl Builder {
             .fields
             .iter()
             .map(|f| match f.proto_type {
-                parser::Type::Map(_, _) => {
+                proto::Type::Map(_, _) => {
                     let ident = f.value.ident.clone().unwrap();
                     syn::FieldValue {
                         attrs: Vec::new(),
