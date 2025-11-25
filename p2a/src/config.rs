@@ -1,5 +1,7 @@
 use std::{error, fs, io::Write, path};
 
+use crate::builder::{generate_arrow_builders, parse_oneof};
+
 #[derive(Default)]
 pub enum EnumRepr {
     #[default]
@@ -36,7 +38,9 @@ impl Config {
         let proto_file_content = fs::read_to_string(source)?;
         let proto_code = syn::parse_file(&proto_file_content)?;
 
-        let items = crate::builder::generate_arrow_builders(proto_code.items, &self.proto_root)?;
+        let oneof_enums = parse_oneof(&proto_code.items, &self.proto_root, "self")?;
+        let items =
+            generate_arrow_builders(proto_code.items, &self.proto_root, "self", &oneof_enums)?;
         let builders_code = syn::File {
             shebang: None,
             attrs: Vec::new(),

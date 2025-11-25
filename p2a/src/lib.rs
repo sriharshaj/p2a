@@ -1,5 +1,6 @@
 mod builder;
 mod config;
-pub mod proto;
+mod proto;
+mod utils;
 
 pub use config::Config;

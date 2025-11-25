@@ -13,15 +13,18 @@ pub struct User {
     pub is_active: bool,
     #[prost(enumeration = "user::UserType", tag = "6")]
     pub r#type: i32,
-    #[prost(message, repeated, tag = "7")]
-    pub addresses: ::prost::alloc::vec::Vec<user::Address>,
+    #[prost(message, optional, tag = "7")]
+    pub address: ::core::option::Option<user::Address>,
     #[prost(message, repeated, tag = "10")]
     pub transactions: ::prost::alloc::vec::Vec<Transaction>,
-    /// repeated PostType post_types = 12;
-    /// map <string, PostType> user_string = 13;
-    /// map <int32, BankAccount> bank = 14;
     #[prost(map = "int32, message", tag = "11")]
     pub posts: ::std::collections::HashMap<i32, Post>,
+    #[prost(enumeration = "PostType", repeated, tag = "12")]
+    pub post_types: ::prost::alloc::vec::Vec<i32>,
+    #[prost(map = "string, enumeration(PostType)", tag = "13")]
+    pub user_string: ::std::collections::HashMap<::prost::alloc::string::String, i32>,
+    #[prost(map = "int32, message", tag = "14")]
+    pub bank: ::std::collections::HashMap<i32, BankAccount>,
     #[prost(oneof = "user::PaymentMethod", tags = "8, 9")]
     pub payment_method: ::core::option::Option<user::PaymentMethod>,
 }

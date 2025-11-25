@@ -6,32 +6,24 @@ pub struct UserBuilder {
     pub age: ::arrow::array::UInt32Builder,
     pub is_active: ::arrow::array::BooleanBuilder,
     pub r#type: ::arrow::array::StringBuilder,
-    pub addresses: ::arrow::array::ListBuilder<user::AddressBuilder>,
-    pub transactions: ::arrow::array::ListBuilder<TransactionBuilder>,
-    pub posts: ::arrow::array::MapBuilder<::arrow::array::Int32Builder, PostBuilder>,
-    pub payment_method: user::PaymentMethodBuilder,
+    pub address: self::user::AddressBuilder,
+    pub transactions: ::arrow::array::ListBuilder<self::TransactionBuilder>,
+    pub posts: ::arrow::array::MapBuilder<
+        ::arrow::array::Int32Builder,
+        self::PostBuilder,
+    >,
+    pub post_types: ::arrow::array::ListBuilder<::arrow::array::StringBuilder>,
+    pub user_string: ::arrow::array::MapBuilder<
+        ::arrow::array::StringBuilder,
+        ::arrow::array::StringBuilder,
+    >,
+    pub bank: ::arrow::array::MapBuilder<
+        ::arrow::array::Int32Builder,
+        self::BankAccountBuilder,
+    >,
+    pub credit_card: self::CreditCardBuilder,
+    pub bank_account: self::BankAccountBuilder,
     _nulls: ::arrow::array::NullBufferBuilder,
-}
-impl Default for UserBuilder {
-    fn default() -> Self {
-        UserBuilder {
-            id: Default::default(),
-            name: Default::default(),
-            email: Default::default(),
-            age: Default::default(),
-            is_active: Default::default(),
-            r#type: Default::default(),
-            addresses: Default::default(),
-            transactions: Default::default(),
-            posts: ::arrow::array::MapBuilder::new(
-                None,
-                Default::default(),
-                Default::default(),
-            ),
-            payment_method: Default::default(),
-            _nulls: ::arrow::array::NullBufferBuilder::new(0),
-        }
-    }
 }
 impl UserBuilder {
     pub fn append_value(&mut self, record: crate::example::User) {
@@ -46,11 +38,7 @@ impl UserBuilder {
                     .unwrap_or_default()
                     .as_str_name(),
             );
-        if record.addresses.is_empty() {
-            self.addresses.append_null();
-        } else {
-            self.addresses.append_value(record.addresses.into_iter().map(Some));
-        }
+        self.address.append_option(record.address);
         if record.transactions.is_empty() {
             self.transactions.append_null();
         } else {
@@ -65,7 +53,62 @@ impl UserBuilder {
             }
             let _ = self.posts.append(true);
         }
-        self.payment_method.append_option(record.payment_method);
+        if record.post_types.is_empty() {
+            self.post_types.append_null();
+        } else {
+            self.post_types
+                .append_value(
+                    record
+                        .post_types
+                        .into_iter()
+                        .map(|v| {
+                            Some(
+                                crate::example::PostType::try_from(v)
+                                    .unwrap_or_default()
+                                    .as_str_name(),
+                            )
+                        }),
+                );
+        }
+        if record.user_string.is_empty() {
+            let _ = self.user_string.append(false);
+        } else {
+            for (key, val) in record.user_string.into_iter() {
+                self.user_string.keys().append_value(key);
+                self.user_string
+                    .values()
+                    .append_value(
+                        crate::example::PostType::try_from(val)
+                            .unwrap_or_default()
+                            .as_str_name(),
+                    );
+            }
+            let _ = self.user_string.append(true);
+        }
+        if record.bank.is_empty() {
+            let _ = self.bank.append(false);
+        } else {
+            for (key, val) in record.bank.into_iter() {
+                self.bank.keys().append_value(key);
+                self.bank.values().append_value(val);
+            }
+            let _ = self.bank.append(true);
+        }
+        if let Some(record) = record.payment_method {
+            match record {
+                crate::example::user::PaymentMethod::CreditCard(payment_method) => {
+                    self.credit_card.append_value(payment_method);
+                    self.bank_account.append_null();
+                }
+                crate::example::user::PaymentMethod::BankAccount(payment_method) => {
+                    self.bank_account.append_value(payment_method);
+                    self.credit_card.append_null();
+                }
+            };
+        } else {
+            self.credit_card.append_null();
+            self.bank_account.append_null();
+        }
         self._nulls.append(true);
     }
     pub fn append_null(&mut self) {
@@ -75,10 +118,16 @@ impl UserBuilder {
         self.age.append_null();
         self.is_active.append_null();
         self.r#type.append_null();
-        self.addresses.append_null();
+        self.address.append_null();
         self.transactions.append_null();
         let _ = self.posts.append(false);
-        self.payment_method.append_null();
+        self.post_types.append_null();
+        let _ = self.user_string.append(false);
+        let _ = self.bank.append(false);
+        {
+            self.credit_card.append_null();
+            self.bank_account.append_null();
+        };
         self._nulls.append_null();
     }
     pub fn append_option(&mut self, record: Option<crate::example::User>) {
@@ -151,9 +200,9 @@ impl UserBuilder {
             fields.push(_field);
         };
         {
-            let _array = ::std::sync::Arc::new(self.addresses.finish());
+            let _array = ::std::sync::Arc::new(self.address.finish());
             let _field = ::arrow::datatypes::Field::new(
-                "addresses",
+                "address",
                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),
                 true,
             );
@@ -181,14 +230,56 @@ impl UserBuilder {
             fields.push(_field);
         };
         {
-            let _array = ::std::sync::Arc::new(self.payment_method.finish());
+            let _array = ::std::sync::Arc::new(self.post_types.finish());
             let _field = ::arrow::datatypes::Field::new(
-                "payment_method",
+                "post_types",
                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),
                 true,
             );
             arrays.push(_array);
             fields.push(_field);
+        };
+        {
+            let _array = ::std::sync::Arc::new(self.user_string.finish());
+            let _field = ::arrow::datatypes::Field::new(
+                "user_string",
+                ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                true,
+            );
+            arrays.push(_array);
+            fields.push(_field);
+        };
+        {
+            let _array = ::std::sync::Arc::new(self.bank.finish());
+            let _field = ::arrow::datatypes::Field::new(
+                "bank",
+                ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                true,
+            );
+            arrays.push(_array);
+            fields.push(_field);
+        };
+        {
+            {
+                let _array = ::std::sync::Arc::new(self.credit_card.finish());
+                let _field = ::arrow::datatypes::Field::new(
+                    "credit_card",
+                    ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                    true,
+                );
+                arrays.push(_array);
+                fields.push(_field);
+            };
+            {
+                let _array = ::std::sync::Arc::new(self.bank_account.finish());
+                let _field = ::arrow::datatypes::Field::new(
+                    "bank_account",
+                    ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                    true,
+                );
+                arrays.push(_array);
+                fields.push(_field);
+            };
         };
         ::arrow::array::StructArray::new(
             ::arrow::datatypes::Fields::from(fields),
@@ -260,9 +351,9 @@ impl UserBuilder {
             fields.push(_field);
         };
         {
-            let _array = ::std::sync::Arc::new(self.addresses.finish_cloned());
+            let _array = ::std::sync::Arc::new(self.address.finish_cloned());
             let _field = ::arrow::datatypes::Field::new(
-                "addresses",
+                "address",
                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),
                 true,
             );
@@ -290,14 +381,56 @@ impl UserBuilder {
             fields.push(_field);
         };
         {
-            let _array = ::std::sync::Arc::new(self.payment_method.finish_cloned());
+            let _array = ::std::sync::Arc::new(self.post_types.finish_cloned());
             let _field = ::arrow::datatypes::Field::new(
-                "payment_method",
+                "post_types",
                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),
                 true,
             );
             arrays.push(_array);
             fields.push(_field);
+        };
+        {
+            let _array = ::std::sync::Arc::new(self.user_string.finish_cloned());
+            let _field = ::arrow::datatypes::Field::new(
+                "user_string",
+                ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                true,
+            );
+            arrays.push(_array);
+            fields.push(_field);
+        };
+        {
+            let _array = ::std::sync::Arc::new(self.bank.finish_cloned());
+            let _field = ::arrow::datatypes::Field::new(
+                "bank",
+                ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                true,
+            );
+            arrays.push(_array);
+            fields.push(_field);
+        };
+        {
+            {
+                let _array = ::std::sync::Arc::new(self.credit_card.finish_cloned());
+                let _field = ::arrow::datatypes::Field::new(
+                    "credit_card",
+                    ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                    true,
+                );
+                arrays.push(_array);
+                fields.push(_field);
+            };
+            {
+                let _array = ::std::sync::Arc::new(self.bank_account.finish_cloned());
+                let _field = ::arrow::datatypes::Field::new(
+                    "bank_account",
+                    ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                    true,
+                );
+                arrays.push(_array);
+                fields.push(_field);
+            };
         };
         ::arrow::array::StructArray::new(
             ::arrow::datatypes::Fields::from(fields),
@@ -340,18 +473,6 @@ pub mod user {
         pub zip_code: ::arrow::array::StringBuilder,
         pub country: ::arrow::array::StringBuilder,
         _nulls: ::arrow::array::NullBufferBuilder,
-    }
-    impl Default for AddressBuilder {
-        fn default() -> Self {
-            AddressBuilder {
-                street: Default::default(),
-                city: Default::default(),
-                state: Default::default(),
-                zip_code: Default::default(),
-                country: Default::default(),
-                _nulls: ::arrow::array::NullBufferBuilder::new(0),
-            }
-        }
     }
     impl AddressBuilder {
         pub fn append_value(&mut self, record: crate::example::user::Address) {
@@ -523,151 +644,12 @@ pub mod user {
             self
         }
     }
-    #[derive(Debug)]
-    pub struct PaymentMethodBuilder {
-        pub credit_card: super::CreditCardBuilder,
-        pub bank_account: super::BankAccountBuilder,
-        _nulls: ::arrow::array::NullBufferBuilder,
-    }
-    impl Default for PaymentMethodBuilder {
-        fn default() -> Self {
-            PaymentMethodBuilder {
-                credit_card: Default::default(),
-                bank_account: Default::default(),
-                _nulls: ::arrow::array::NullBufferBuilder::new(0),
-            }
-        }
-    }
-    impl PaymentMethodBuilder {
-        pub fn append_value(&mut self, record: crate::example::user::PaymentMethod) {
-            match record {
-                crate::example::user::PaymentMethod::CreditCard(record) => {
-                    self.credit_card.append_value(record);
-                    self.bank_account.append_null();
-                }
-                crate::example::user::PaymentMethod::BankAccount(record) => {
-                    self.bank_account.append_value(record);
-                    self.credit_card.append_null();
-                }
-            }
-            self._nulls.append_non_null();
-        }
-        pub fn append_null(&mut self) {
-            self.credit_card.append_null();
-            self.bank_account.append_null();
-            self._nulls.append_null();
-        }
-        pub fn append_option(
-            &mut self,
-            record: Option<crate::example::user::PaymentMethod>,
-        ) {
-            match record {
-                Some(record) => self.append_value(record),
-                None => self.append_null(),
-            }
-        }
-        pub fn finish(&mut self) -> ::arrow::array::StructArray {
-            let mut arrays: Vec<::arrow::array::ArrayRef> = Vec::new();
-            let mut fields: Vec<::arrow::datatypes::Field> = Vec::new();
-            {
-                let _array = ::std::sync::Arc::new(self.credit_card.finish());
-                let _field = ::arrow::datatypes::Field::new(
-                    "credit_card",
-                    ::arrow::array::Array::data_type(_array.as_ref()).clone(),
-                    true,
-                );
-                arrays.push(_array);
-                fields.push(_field);
-            };
-            {
-                let _array = ::std::sync::Arc::new(self.bank_account.finish());
-                let _field = ::arrow::datatypes::Field::new(
-                    "bank_account",
-                    ::arrow::array::Array::data_type(_array.as_ref()).clone(),
-                    true,
-                );
-                arrays.push(_array);
-                fields.push(_field);
-            };
-            ::arrow::array::StructArray::new(
-                ::arrow::datatypes::Fields::from(fields),
-                arrays,
-                self._nulls.finish(),
-            )
-        }
-        pub fn finish_cloned(&self) -> ::arrow::array::StructArray {
-            let mut arrays: Vec<::arrow::array::ArrayRef> = Vec::new();
-            let mut fields: Vec<::arrow::datatypes::Field> = Vec::new();
-            {
-                let _array = ::std::sync::Arc::new(self.credit_card.finish_cloned());
-                let _field = ::arrow::datatypes::Field::new(
-                    "credit_card",
-                    ::arrow::array::Array::data_type(_array.as_ref()).clone(),
-                    true,
-                );
-                arrays.push(_array);
-                fields.push(_field);
-            };
-            {
-                let _array = ::std::sync::Arc::new(self.bank_account.finish_cloned());
-                let _field = ::arrow::datatypes::Field::new(
-                    "bank_account",
-                    ::arrow::array::Array::data_type(_array.as_ref()).clone(),
-                    true,
-                );
-                arrays.push(_array);
-                fields.push(_field);
-            };
-            ::arrow::array::StructArray::new(
-                ::arrow::datatypes::Fields::from(fields),
-                arrays,
-                self._nulls.finish_cloned(),
-            )
-        }
-    }
-    impl Extend<Option<crate::example::user::PaymentMethod>> for PaymentMethodBuilder {
-        fn extend<T: IntoIterator<Item = Option<crate::example::user::PaymentMethod>>>(
-            &mut self,
-            iter: T,
-        ) {
-            iter.into_iter().for_each(|r| self.append_option(r));
-        }
-    }
-    impl ::arrow::array::ArrayBuilder for PaymentMethodBuilder {
-        fn len(&self) -> usize {
-            self._nulls.len()
-        }
-        fn finish(&mut self) -> ::arrow::array::ArrayRef {
-            ::std::sync::Arc::new(self.finish())
-        }
-        fn finish_cloned(&self) -> ::arrow::array::ArrayRef {
-            ::std::sync::Arc::new(self.finish_cloned())
-        }
-        fn as_any(&self) -> &dyn ::std::any::Any {
-            self
-        }
-        fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any {
-            self
-        }
-        fn into_box_any(self: Box<Self>) -> Box<dyn ::std::any::Any> {
-            self
-        }
-    }
 }
 #[derive(Debug)]
 pub struct PostBuilder {
     pub title: ::arrow::array::StringBuilder,
     pub body: ::arrow::array::BinaryBuilder,
     _nulls: ::arrow::array::NullBufferBuilder,
-}
-impl Default for PostBuilder {
-    fn default() -> Self {
-        PostBuilder {
-            title: Default::default(),
-            body: Default::default(),
-            _nulls: ::arrow::array::NullBufferBuilder::new(0),
-        }
-    }
 }
 impl PostBuilder {
     pub fn append_value(&mut self, record: crate::example::Post) {
@@ -775,15 +757,6 @@ pub struct TransactionBuilder {
     pub amount: ::arrow::array::Float32Builder,
     pub timestamp: ::arrow::array::UInt64Builder,
     _nulls: ::arrow::array::NullBufferBuilder,
-}
-impl Default for TransactionBuilder {
-    fn default() -> Self {
-        TransactionBuilder {
-            amount: Default::default(),
-            timestamp: Default::default(),
-            _nulls: ::arrow::array::NullBufferBuilder::new(0),
-        }
-    }
 }
 impl TransactionBuilder {
     pub fn append_value(&mut self, record: crate::example::Transaction) {
@@ -896,17 +869,6 @@ pub struct CreditCardBuilder {
     pub expiry_year: ::arrow::array::UInt32Builder,
     pub cvv: ::arrow::array::StringBuilder,
     _nulls: ::arrow::array::NullBufferBuilder,
-}
-impl Default for CreditCardBuilder {
-    fn default() -> Self {
-        CreditCardBuilder {
-            card_number: Default::default(),
-            expiry_month: Default::default(),
-            expiry_year: Default::default(),
-            cvv: Default::default(),
-            _nulls: ::arrow::array::NullBufferBuilder::new(0),
-        }
-    }
 }
 impl CreditCardBuilder {
     pub fn append_value(&mut self, record: crate::example::CreditCard) {
@@ -1062,16 +1024,6 @@ pub struct BankAccountBuilder {
     pub routing_number: ::arrow::array::StringBuilder,
     pub bank_name: ::arrow::array::StringBuilder,
     _nulls: ::arrow::array::NullBufferBuilder,
-}
-impl Default for BankAccountBuilder {
-    fn default() -> Self {
-        BankAccountBuilder {
-            account_number: Default::default(),
-            routing_number: Default::default(),
-            bank_name: Default::default(),
-            _nulls: ::arrow::array::NullBufferBuilder::new(0),
-        }
-    }
 }
 impl BankAccountBuilder {
     pub fn append_value(&mut self, record: crate::example::BankAccount) {

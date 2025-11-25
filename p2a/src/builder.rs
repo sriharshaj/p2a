@@ -1,10 +1,11 @@
-use heck::ToSnakeCase;
+use std::collections::HashMap;
+
+use heck::{ToSnakeCase, ToUpperCamelCase};
 use quote::ToTokens;
-use syn::spanned::Spanned;
 
-use crate::proto;
+use crate::{proto, utils::get_absolute_type_path};
 
-fn oneof_enum(item: &syn::ItemEnum) -> bool {
+fn is_oneof_enum(item: &syn::ItemEnum) -> bool {
     //TODO: change later to proper code
     for v in &item.variants {
         if v.fields.is_empty() {
@@ -15,32 +16,67 @@ fn oneof_enum(item: &syn::ItemEnum) -> bool {
     true
 }
 
+pub fn parse_oneof(
+    proto_items: &[syn::Item],
+    proto_namespace: &str,
+    arrow_namespace: &str,
+) -> syn::Result<HashMap<String, Vec<proto::Field>>> {
+    let mut oneof_enums: HashMap<String, Vec<proto::Field>> = HashMap::new();
+
+    for item in proto_items {
+        if let syn::Item::Enum(data) = item {
+            if !is_oneof_enum(data) {
+                continue;
+            }
+
+            let mut fields = Vec::new();
+            for v in &data.variants {
+                fields.push(parse_to_proto_field(v, proto_namespace, arrow_namespace)?);
+            }
+            let path = get_absolute_type_path(&data.ident.to_string(), arrow_namespace);
+            oneof_enums.insert(path, fields);
+        } else if let syn::Item::Mod(data) = item {
+            let proto_namespace = format!("{}::{}", proto_namespace, &data.ident);
+            let arrow_namespace = format!("{}::{}", arrow_namespace, &data.ident);
+            if let Some((_, items)) = &data.content {
+                oneof_enums.extend(parse_oneof(items, &proto_namespace, &arrow_namespace)?);
+            }
+        }
+    }
+
+    Ok(oneof_enums)
+}
+
 pub(super) fn generate_arrow_builders(
     proto_items: Vec<syn::Item>,
-    namespace: &str,
+    proto_namespace: &str,
+    arrow_namespace: &str,
+    one_of_enums: &HashMap<String, Vec<proto::Field>>,
 ) -> syn::Result<Vec<syn::Item>> {
     let mut builder_items: Vec<syn::Item> = Vec::new();
 
     for item in proto_items {
         match item {
             syn::Item::Struct(data) => {
-                let builder = Builder::try_from((&data, namespace))?;
-                let mut items = builder.generate_all_items();
-                builder_items.append(&mut items);
-            }
-            syn::Item::Enum(data) => {
-                if !oneof_enum(&data) {
-                    continue;
-                }
-                let builder = Builder::try_from((&data, namespace))?;
+                let builder =
+                    Builder::try_from((&data, proto_namespace, arrow_namespace, one_of_enums))?;
                 let mut items = builder.generate_all_items();
                 builder_items.append(&mut items);
             }
             syn::Item::Mod(mut data) => {
-                let namespace = format!("{}::{}", namespace, &data.ident);
+                let proto_namespace = format!("{}::{}", proto_namespace, &data.ident);
+                let arrow_namespace = format!("{}::{}", arrow_namespace, &data.ident);
                 data.attrs = Vec::new();
                 if let Some((brace, items)) = data.content {
-                    data.content = Some((brace, generate_arrow_builders(items, &namespace)?));
+                    data.content = Some((
+                        brace,
+                        generate_arrow_builders(
+                            items,
+                            &proto_namespace,
+                            &arrow_namespace,
+                            one_of_enums,
+                        )?,
+                    ));
                 }
                 builder_items.push(syn::Item::Mod(data));
             }
@@ -50,173 +86,69 @@ pub(super) fn generate_arrow_builders(
     Ok(builder_items)
 }
 
-fn get_full_path(type_path: &syn::TypePath) -> String {
-    let head = if type_path.path.leading_colon.is_some() {
-        "::".to_string()
-    } else {
-        "".to_string()
-    };
-
-    let tail = type_path
-        .path
-        .segments
-        .iter()
-        .map(|f| f.ident.to_string())
-        .collect::<Vec<String>>()
-        .join("::");
-
-    format!("{}{}", head, tail)
-}
-
-fn is_string_type(full_ident: &str) -> bool {
-    full_ident == "String" || full_ident == "::prost::alloc::string::String"
-}
-
-fn is_vec_type(full_ident: &str) -> bool {
-    full_ident == "Vec" || full_ident == "::prost::alloc::vec::Vec"
-}
-
-fn is_box_type(full_ident: &str) -> bool {
-    full_ident == "Box" || full_ident == "::prost::alloc::boxed::Box"
-}
-
-fn is_hash_map_type(full_ident: &str) -> bool {
-    full_ident == "HashMap" || full_ident == "::std::collections::HashMap"
-}
-
-fn is_option(full_ident: &str) -> bool {
-    full_ident == "Option" || full_ident == "::core::option::Option"
-}
-
-fn parse_generic_argument(
-    argument: &syn::GenericArgument,
+pub fn get_arrow_type(
     proto_type: &proto::Type,
-) -> syn::Result<syn::Type> {
-    if let syn::GenericArgument::Type(ty) = argument
-        && let syn::Type::Path(type_path) = ty
-    {
-        let t = parse_type(type_path.to_owned(), proto_type)?;
-        Ok(syn::parse_quote!(#t))
-    } else {
-        Err(syn::Error::new(
-            argument.span(),
-            "Expected protobuf compatible type",
-        ))
+    proto_cardinality: &proto::Cardinality,
+) -> syn::Type {
+    if let proto::Cardinality::Repeated = proto_cardinality {
+        let t = get_arrow_type(proto_type, &proto::Cardinality::Singular);
+        return syn::parse_quote!(::arrow::array::ListBuilder<#t>);
+    }
+
+    match proto_type {
+        proto::Type::Bool => syn::parse_quote!(::arrow::array::BooleanBuilder),
+        proto::Type::Float => syn::parse_quote!(::arrow::array::Float32Builder),
+        proto::Type::Double => syn::parse_quote!(::arrow::array::Float64Builder),
+        proto::Type::Enum(_) => syn::parse_quote!(::arrow::array::StringBuilder),
+        proto::Type::Int32 | proto::Type::SInt32 | proto::Type::SFixed32 => {
+            syn::parse_quote!(::arrow::array::Int32Builder)
+        }
+        proto::Type::Int64 | proto::Type::SInt64 | proto::Type::SFixed64 => {
+            syn::parse_quote!(::arrow::array::Int64Builder)
+        }
+        proto::Type::UInt32 | proto::Type::Fixed32 => {
+            syn::parse_quote!(::arrow::array::UInt32Builder)
+        }
+        proto::Type::UInt64 | proto::Type::Fixed64 => {
+            syn::parse_quote!(::arrow::array::UInt64Builder)
+        }
+        proto::Type::String => syn::parse_quote!(::arrow::array::StringBuilder),
+        proto::Type::Bytes => syn::parse_quote!(::arrow::array::BinaryBuilder),
+        proto::Type::Map(k, v) => {
+            let k = get_arrow_type(k, &proto::Cardinality::Singular);
+            let v = get_arrow_type(v, &proto::Cardinality::Singular);
+            syn::parse_quote!(::arrow::array::MapBuilder<#k,#v>)
+        }
+        proto::Type::Message(m) => {
+            let mut path = m.clone();
+            let last_ident = path.segments.last().unwrap().ident.clone();
+
+            let segment = syn::PathSegment {
+                ident: syn::Ident::new(&format!("{}Builder", last_ident), last_ident.span()),
+                arguments: syn::PathArguments::None,
+            };
+
+            path.segments.pop();
+            path.segments.push(segment);
+            syn::parse_quote!(#path)
+        }
+        _ => {
+            panic!("Unexpected");
+        }
     }
 }
 
-fn parse_single_arg_path(
-    arguments: &syn::PathArguments,
-    proto_type: &proto::Type,
-) -> syn::Result<syn::Type> {
-    if let syn::PathArguments::AngleBracketed(args) = arguments
-        && let Some(first_arg) = args.args.first()
-    {
-        parse_generic_argument(first_arg, proto_type)
-    } else {
-        Err(syn::Error::new(
-            arguments.span(),
-            "Expected single argument for container type",
-        ))
-    }
-}
+fn parse_attribute(
+    field: &syn::Field,
+    proto_namespace: &str,
+    arrow_namespace: &str,
+    is_oneof_field: bool,
+    oneof_fields: &HashMap<String, Vec<proto::Field>>,
+) -> syn::Result<proto::Field> {
+    let attrs = &field.attrs;
+    let ident = field.ident.as_ref().unwrap();
+    let ty = &field.ty;
 
-fn parse_two_args_path(
-    arguments: &syn::PathArguments,
-    key_proto_type: &proto::Type,
-    value_proto_type: &proto::Type,
-) -> syn::Result<[syn::Type; 2]> {
-    if let syn::PathArguments::AngleBracketed(args) = arguments
-        && args.args.len() == 2
-    {
-        Ok([
-            parse_generic_argument(&args.args[0], key_proto_type)?,
-            parse_generic_argument(&args.args[1], value_proto_type)?,
-        ])
-    } else {
-        Err(syn::Error::new(
-            arguments.span(),
-            "Expected two arguments in angle brackets for map type",
-        ))
-    }
-}
-
-pub fn parse_type(
-    mut type_path: syn::TypePath,
-    proto_type: &proto::Type,
-) -> syn::Result<syn::Type> {
-    let full_path = get_full_path(&type_path);
-    let last_segment = match type_path.path.segments.pop() {
-        Some(syn::punctuated::Pair::End(segment)) => segment,
-        Some(_) => {
-            return Err(syn::Error::new(
-                type_path.path.span(),
-                "Expected type path to end with identifier",
-            ));
-        }
-        None => {
-            return Err(syn::Error::new(
-                type_path.path.span(),
-                "Expected non-empty type, found empty type",
-            ));
-        }
-    };
-
-    if full_path == "bool" {
-        Ok(syn::parse_quote!(::arrow::array::BooleanBuilder))
-    } else if full_path == "f32" {
-        Ok(syn::parse_quote!(::arrow::array::Float32Builder))
-    } else if full_path == "f64" {
-        Ok(syn::parse_quote!(::arrow::array::Float64Builder))
-    } else if full_path == "i32" {
-        if let proto::Type::Enum(_) = proto_type {
-            return Ok(syn::parse_quote!(::arrow::array::StringBuilder));
-        }
-        Ok(syn::parse_quote!(::arrow::array::Int32Builder))
-    } else if full_path == "i64" {
-        Ok(syn::parse_quote!(::arrow::array::Int64Builder))
-    } else if full_path == "u32" {
-        Ok(syn::parse_quote!(::arrow::array::UInt32Builder))
-    } else if full_path == "u64" {
-        Ok(syn::parse_quote!(::arrow::array::UInt64Builder))
-    } else if is_option(&full_path) {
-        let t = parse_single_arg_path(&last_segment.arguments, proto_type)?;
-        Ok(t)
-    } else if is_string_type(&full_path) {
-        Ok(syn::parse_quote!(::arrow::array::StringBuilder))
-    } else if is_vec_type(&full_path) {
-        if let proto::Type::Bytes = proto_type {
-            return Ok(syn::parse_quote!(::arrow::array::BinaryBuilder));
-        }
-
-        let t = parse_single_arg_path(&last_segment.arguments, proto_type)?;
-        Ok(syn::parse_quote!(::arrow::array::ListBuilder<#t>))
-    } else if is_box_type(&full_path) {
-        Err(syn::Error::new(
-            type_path.span(),
-            "Box types are not yet supported",
-        ))
-    } else if is_hash_map_type(&full_path)
-        && let proto::Type::Map(key_type, value_type) = proto_type
-    {
-        let [k, v] = parse_two_args_path(&last_segment.arguments, key_type, value_type)?;
-        let t = syn::parse_quote!(::arrow::array::MapBuilder<#k,#v>);
-        Ok(t)
-    } else {
-        let segment = syn::PathSegment {
-            ident: syn::Ident::new(
-                &(last_segment.ident.to_string() + "Builder"),
-                last_segment.span(),
-            ),
-            arguments: syn::PathArguments::None,
-        };
-
-        type_path.path.segments.push(segment);
-        Ok(syn::parse_quote!(#type_path))
-    }
-}
-
-fn parse_attribute(attrs: &[syn::Attribute], namespace: &str) -> syn::Result<proto::Field> {
     if attrs.is_empty() {
         panic!("expected atleast one attribute");
     }
@@ -237,106 +169,76 @@ fn parse_attribute(attrs: &[syn::Attribute], namespace: &str) -> syn::Result<pro
     }
 
     syn::parse::Parser::parse2(
-        |input: syn::parse::ParseStream| proto::Field::parse_with_namespace(input, namespace),
+        |input: syn::parse::ParseStream| {
+            proto::Field::parse_with_namespace(
+                input,
+                ident,
+                ty,
+                proto_namespace,
+                arrow_namespace,
+                is_oneof_field,
+                oneof_fields,
+            )
+        },
         meta_list.tokens.clone(),
     )
 }
 
-pub fn generate_fields_from_struct(
+pub fn parse_to_proto_fields(
     item_struct: &syn::ItemStruct,
-    namespace: &str,
-) -> syn::Result<Vec<Field>> {
-    let mut fc: Vec<Field> = Vec::with_capacity(item_struct.fields.iter().len());
-
+    proto_namespace: &str,
+    arrow_namespace: &str,
+    oneof_fields: &HashMap<String, Vec<proto::Field>>,
+) -> syn::Result<Vec<proto::Field>> {
+    let mut fields = Vec::new();
     for field in item_struct.fields.iter() {
-        let mut field = field.clone();
-
-        let prost_attr = parse_attribute(&field.attrs, namespace)?;
-        field.attrs = Vec::new();
-        let ty = match field.ty {
-            syn::Type::Path(type_path) => parse_type(type_path, &prost_attr.r#type)?,
-            _ => {
-                panic!("Expected protobuf compatible type");
-            }
-        };
-        field.ty = ty;
-        fc.push(Field {
-            value: field,
-            proto_cardinality: prost_attr.cardinality,
-            proto_type: prost_attr.r#type,
-            enum_variant: None,
-        });
+        let proto_field =
+            parse_attribute(field, proto_namespace, arrow_namespace, false, oneof_fields)?;
+        fields.push(proto_field);
     }
-
-    Ok(fc)
+    Ok(fields)
 }
 
-fn generate_field_from_enum_variant(
-    vis: &syn::Visibility,
+fn parse_to_proto_field(
     variant: &syn::Variant,
-    namespace: &str,
-) -> syn::Result<Field> {
+    proto_namespace: &str,
+    arrow_namespace: &str,
+) -> syn::Result<proto::Field> {
     if variant.fields.len() != 1 {
-        return Err(syn::Error::new(
-            variant.ident.span(),
-            format!(
-                "Enum variants must have exactly one field.
-                This macro is designed for prost-generated enums from protobuf oneof fields: {:?}",
-                variant
-            ),
+        return Err(syn::Error::new_spanned(
+            variant,
+            "Enum variants must have exactly one field",
         ));
     }
 
-    let mut field = variant.fields.iter().next().unwrap().clone();
-
-    let prost_attr = parse_attribute(&variant.attrs, namespace)?;
-    field.attrs = Vec::new();
-    field.vis = vis.clone();
-    field.colon_token = Some(syn::token::Colon::default());
-    field.ident = Some(syn::Ident::new(
-        &variant.ident.to_string().to_snake_case(),
-        variant.ident.span(),
-    ));
-
-    let ty = match field.ty {
-        syn::Type::Path(type_path) => parse_type(type_path, &prost_attr.r#type)?,
-        _ => {
-            return Err(syn::Error::new(
-                field.ty.span(),
-                "Expected protobuf compatible type",
-            ));
-        }
+    let field = syn::Field {
+        vis: syn::Visibility::Inherited,
+        attrs: variant.attrs.to_owned(),
+        mutability: syn::FieldMutability::None,
+        ident: syn::parse_str(&variant.ident.to_string().to_snake_case())?,
+        colon_token: Some(syn::token::Colon::default()),
+        ty: variant.fields.iter().next().unwrap().clone().ty,
     };
-    field.ty = ty;
 
-    Ok(Field {
-        value: field,
-        proto_cardinality: prost_attr.cardinality,
-        proto_type: prost_attr.r#type,
-        enum_variant: Some(variant.ident.clone()),
-    })
+    parse_attribute(
+        &field,
+        proto_namespace,
+        arrow_namespace,
+        true,
+        &HashMap::new(),
+    )
 }
 
-pub struct Field {
-    pub value: syn::Field,
-    pub proto_cardinality: proto::Cardinality,
-    pub proto_type: proto::Type,
-    pub enum_variant: Option<syn::Ident>,
-}
-
-impl Field {
-    fn generate_append_value_stmt(
-        &self,
-        message_type: &MessageType,
-        message_instance: &syn::Ident,
-    ) -> syn::Stmt {
-        let field_ident = &self.value.ident.as_ref().unwrap();
-        let field_expr: syn::Expr = match message_type {
-            MessageType::Enum => syn::parse_quote!(#message_instance),
-            MessageType::Struct => syn::parse_quote!(#message_instance.#field_ident),
+impl proto::Field {
+    fn generate_append_value_stmt(&self, message_instance: &syn::Ident) -> syn::Stmt {
+        let field_ident = &self.name;
+        let field_expr: syn::Expr = if self.oneof_field {
+            syn::parse_quote!(#message_instance)
+        } else {
+            syn::parse_quote!(#message_instance.#field_ident)
         };
 
-        match &self.proto_type {
+        match &self.r#type {
             proto::Type::Map(_, value_field) => {
                 let val: syn::Ident = syn::parse_quote!(val);
                 let value_append_stmt: syn::Stmt =
@@ -364,7 +266,7 @@ impl Field {
                     }
                 }
             }
-            proto::Type::Enum(enum_path) => match self.proto_cardinality {
+            proto::Type::Enum(enum_path) => match self.cardinality {
                 proto::Cardinality::Singular => {
                     syn::parse_quote! {
                         self.#field_ident.append_value(
@@ -373,8 +275,16 @@ impl Field {
                     }
                 }
                 proto::Cardinality::Optional => {
-                    syn::parse_quote! {
-                        self.#field_ident.append_option(#field_expr);
+                    if self.oneof_field {
+                        syn::parse_quote! {
+                            self.#field_ident.append_value(
+                                #enum_path::try_from(#field_expr).unwrap_or_default().as_str_name()
+                            );
+                        }
+                    } else {
+                        syn::parse_quote! {
+                            self.#field_ident.append_option(#field_expr);
+                        }
                     }
                 }
                 proto::Cardinality::Repeated => {
@@ -389,15 +299,22 @@ impl Field {
                     }
                 }
             },
-            _ => match self.proto_cardinality {
+            proto::Type::Oneof(_, _) => self.generate_oneof_append_value_fn(message_instance),
+            _ => match self.cardinality {
                 proto::Cardinality::Singular => {
                     syn::parse_quote! {
                         self.#field_ident.append_value(#field_expr);
                     }
                 }
                 proto::Cardinality::Optional => {
-                    syn::parse_quote! {
-                        self.#field_ident.append_option(#field_expr);
+                    if self.oneof_field {
+                        syn::parse_quote! {
+                            self.#field_ident.append_value(#field_expr);
+                        }
+                    } else {
+                        syn::parse_quote! {
+                            self.#field_ident.append_option(#field_expr);
+                        }
                     }
                 }
                 proto::Cardinality::Repeated => {
@@ -412,9 +329,156 @@ impl Field {
             },
         }
     }
+
+    fn generate_oneof_append_value_fn(&self, message_instance: &syn::Ident) -> syn::Stmt {
+        let (enum_path, fields) = if let proto::Type::Oneof(enum_path, fields) = &self.r#type {
+            (enum_path, fields)
+        } else {
+            panic!("This can only be called on Oneof types");
+        };
+        let field_ident = &self.name;
+
+        let arms: Vec<syn::Arm> = fields
+            .iter()
+            .map(|matched_field| {
+                let variant_ident: syn::Ident =
+                    syn::parse_str(&matched_field.name.to_string().to_upper_camel_case()).unwrap();
+
+                let append_stmt = matched_field.generate_append_value_stmt(&self.name);
+                let null_stmts: Vec<syn::Stmt> = fields
+                    .iter()
+                    .filter(|f| f.name != matched_field.name)
+                    .map(|f| {
+                        let other_field_ident = &f.name;
+                        syn::parse_quote! {
+                            self.#other_field_ident.append_null();
+                        }
+                    })
+                    .collect();
+
+                syn::parse_quote! {
+                    #enum_path::#variant_ident(#field_ident) => {
+                        #append_stmt
+                        #(#null_stmts)*
+                    }
+                }
+            })
+            .collect();
+
+        let all_null_stmts: Vec<syn::Stmt> = fields
+            .iter()
+            .map(|f| {
+                let ident = &f.name;
+                syn::parse_quote! {
+                    self.#ident.append_null();
+                }
+            })
+            .collect();
+
+        syn::parse_quote! {
+            if let Some(record) = #message_instance.#field_ident {
+                match record {
+                    #(#arms)*
+                };
+            } else {
+                #(#all_null_stmts)*
+            }
+        }
+    }
+
+    fn generate_append_null_stmt(&self) -> syn::Stmt {
+        let ident = &self.name;
+        match &self.r#type {
+            proto::Type::Map(_, _) => {
+                syn::parse_quote! {
+                    let _ = self.#ident.append(false);
+                }
+            }
+            proto::Type::Oneof(_, fields) => {
+                let oneof_stmts = fields.iter().map(|f| f.generate_append_null_stmt());
+                syn::parse_quote! {
+                    {
+                        #(#oneof_stmts)*
+                    };
+                }
+            }
+            _ => {
+                syn::parse_quote! {
+                    self.#ident.append_null();
+                }
+            }
+        }
+    }
+
+    fn generate_finish_stmt(&self, finish: &syn::Ident) -> syn::Stmt {
+        let ident = &self.name;
+        let ident_str = ident.to_string();
+        let ident_str = ident_str.strip_prefix("r#").unwrap_or(&ident_str);
+
+        let is_nullable = match self.r#type {
+            proto::Type::Map(_, _) => true,
+            _ => !(self.cardinality == proto::Cardinality::Singular),
+        };
+        match &self.r#type {
+            proto::Type::Oneof(_, fields) => {
+                let stmts: Vec<syn::Stmt> = fields
+                    .iter()
+                    .map(|f| f.generate_finish_stmt(finish))
+                    .collect();
+                syn::parse_quote! {
+                    {
+                        #(#stmts)*
+                    };
+                }
+            }
+            _ => {
+                syn::parse_quote! {
+                    {
+                        let _array = ::std::sync::Arc::new(self.#ident.#finish());
+                        let _field = ::arrow::datatypes::Field::new(
+                            #ident_str,
+                            ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                            #is_nullable,
+                        );
+
+                        arrays.push(_array);
+                        fields.push(_field);
+                    };
+                }
+            }
+        }
+    }
+
+    // fn generate_default_value(&self) -> syn::FieldValue {
+    //     match self.r#type {
+    //         proto::Type::Map(_, _) => {
+    //             let ident = self.name.clone();
+    //             syn::FieldValue {
+    //                 attrs: Vec::new(),
+    //                 member: syn::Member::Named(ident),
+    //                 colon_token: Some(syn::token::Colon::default()),
+    //                 expr: syn::parse_quote!(::arrow::array::MapBuilder::new(
+    //                     None,
+    //                     Default::default(),
+    //                     Default::default()
+    //                 )),
+    //             }
+    //         }
+    //         _ => {
+    //             let ident = self.name.clone();
+    //             syn::FieldValue {
+    //                 attrs: Vec::new(),
+    //                 member: syn::Member::Named(ident),
+    //                 colon_token: Some(syn::token::Colon::default()),
+    //                 expr: syn::parse_quote!(Default::default()),
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 pub enum MessageType {
+    #[allow(dead_code)]
     Enum,
     Struct,
 }
@@ -423,15 +487,29 @@ pub struct Builder {
     message_instance: syn::Ident,
     ident: syn::Ident,
     message_type: MessageType,
-    fields: Vec<Field>,
+    fields: Vec<proto::Field>,
 }
 
-impl TryFrom<(&syn::ItemStruct, &str)> for Builder {
+impl
+    TryFrom<(
+        &syn::ItemStruct,
+        &str,
+        &str,
+        &HashMap<String, Vec<proto::Field>>,
+    )> for Builder
+{
     type Error = syn::Error;
-    fn try_from((value, namespace): (&syn::ItemStruct, &str)) -> syn::Result<Self> {
-        let fields = generate_fields_from_struct(value, namespace)?;
+    fn try_from(
+        (value, proto_namespace, arrow_namespace, one_of_enums): (
+            &syn::ItemStruct,
+            &str,
+            &str,
+            &HashMap<String, Vec<proto::Field>>,
+        ),
+    ) -> syn::Result<Self> {
+        let fields = parse_to_proto_fields(value, proto_namespace, arrow_namespace, one_of_enums)?;
         Ok(Builder {
-            message: syn::parse_str(&format!("{}::{}", namespace, value.ident))?,
+            message: syn::parse_str(&format!("{}::{}", proto_namespace, value.ident))?,
             message_instance: syn::parse_quote!(record),
             ident: syn::Ident::new(
                 &format!("{}Builder", value.ident),
@@ -443,30 +521,10 @@ impl TryFrom<(&syn::ItemStruct, &str)> for Builder {
     }
 }
 
-impl TryFrom<(&syn::ItemEnum, &str)> for Builder {
-    type Error = syn::Error;
-    fn try_from((value, namespace): (&syn::ItemEnum, &str)) -> syn::Result<Self> {
-        let mut fields = Vec::new();
-        for v in &value.variants {
-            fields.push(generate_field_from_enum_variant(&value.vis, v, namespace)?);
-        }
-        Ok(Builder {
-            message: syn::parse_str(&format!("{}::{}", namespace, value.ident))?,
-            message_instance: syn::parse_quote!(record),
-            ident: syn::Ident::new(
-                &format!("{}Builder", value.ident),
-                proc_macro2::Span::call_site(),
-            ),
-            message_type: MessageType::Enum,
-            fields,
-        })
-    }
-}
-
 impl Builder {
     fn generate_all_items(&self) -> Vec<syn::Item> {
         let builder_struct = self.generate_struct();
-        let append_value_fn = self.generate_append_value_fn();
+        let append_value_fn = self.generate_struct_append_value_fn();
         let append_null_fn = self.generate_append_null_fn();
         let append_option_fn = self.generate_append_option_fn();
         let finish_fn = self.generate_finish_fn(false);
@@ -482,20 +540,49 @@ impl Builder {
                 #finish_cloned_fn
             }
         };
-        let default_trait_impl = self.generate_default_trait_impl();
+        // let default_trait_impl = self.generate_default_trait_impl();
         let extend_trait_impl = self.generate_extend_trait_impl();
         let array_builder_trait_impl = self.generate_array_builder_trait_impl();
 
         vec![
             syn::Item::Struct(builder_struct),
-            syn::Item::Impl(default_trait_impl),
+            // syn::Item::Impl(default_trait_impl),
             syn::Item::Impl(builder_impl),
             syn::Item::Impl(extend_trait_impl),
             syn::Item::Impl(array_builder_trait_impl),
         ]
     }
+
     fn generate_struct(&self) -> syn::ItemStruct {
-        let builder_fields: Vec<syn::Field> = self.fields.iter().map(|f| f.value.clone()).collect();
+        let mut builder_fields: Vec<syn::Field> = Vec::new();
+
+        let non_oneof_fields = self
+            .fields
+            .iter()
+            .filter(|f| !matches!(f.r#type, proto::Type::Oneof(_, _)));
+
+        let oneof_inner_fields = self
+            .fields
+            .iter()
+            .flat_map(|f| match &f.r#type {
+                proto::Type::Oneof(_, inner_fields) => Some(inner_fields),
+                _ => None,
+            })
+            .flatten();
+
+        for proto_field in non_oneof_fields.chain(oneof_inner_fields) {
+            let ty = get_arrow_type(&proto_field.r#type, &proto_field.cardinality);
+            let field = syn::Field {
+                attrs: Vec::new(),
+                vis: syn::parse_quote!(pub),
+                mutability: syn::FieldMutability::None,
+                ident: Some(proto_field.name.to_owned()),
+                colon_token: Default::default(),
+                ty,
+            };
+
+            builder_fields.push(field);
+        }
 
         let builder = &self.ident;
         syn::parse_quote! {
@@ -507,6 +594,7 @@ impl Builder {
             }
         }
     }
+
     fn generate_struct_append_value_fn(&self) -> syn::ImplItemFn {
         assert!(matches!(self.message_type, MessageType::Struct));
         let (message_instance, message) = (&self.message_instance, &self.message);
@@ -514,7 +602,7 @@ impl Builder {
         let stmts: Vec<syn::Stmt> = self
             .fields
             .iter()
-            .map(|f| f.generate_append_value_stmt(&self.message_type, message_instance))
+            .map(|f| f.generate_append_value_stmt(message_instance))
             .collect();
 
         syn::parse_quote! {
@@ -526,77 +614,11 @@ impl Builder {
         }
     }
 
-    fn generate_enum_append_value_fn(&self) -> syn::ImplItemFn {
-        assert!(matches!(self.message_type, MessageType::Enum));
-        let (message_instance, message) = (&self.message_instance, &self.message);
-
-        let arms: Vec<syn::Arm> = self
-            .fields
-            .iter()
-            .map(|matched_field| {
-                let variant_ident = matched_field.enum_variant.as_ref().unwrap();
-
-                let append_stmt =
-                    matched_field.generate_append_value_stmt(&self.message_type, message_instance);
-
-                let null_stmts: Vec<syn::Stmt> = self
-                    .fields
-                    .iter()
-                    .filter(|f| f.enum_variant != matched_field.enum_variant)
-                    .map(|f| {
-                        let other_field_ident = f.value.ident.as_ref().unwrap();
-                        syn::parse_quote! {
-                            self.#other_field_ident.append_null();
-                        }
-                    })
-                    .collect();
-
-                syn::parse_quote! {
-                    #message::#variant_ident(#message_instance) => {
-                        #append_stmt
-                        #(#null_stmts)*
-                    }
-                }
-            })
-            .collect();
-
-        syn::parse_quote! {
-            pub fn append_value(&mut self, #message_instance: #message) {
-                match #message_instance {
-                    #(#arms)*
-                }
-
-                self._nulls.append_non_null();
-            }
-        }
-    }
-
-    fn generate_append_value_fn(&self) -> syn::ImplItemFn {
-        match self.message_type {
-            MessageType::Struct => self.generate_struct_append_value_fn(),
-            MessageType::Enum => self.generate_enum_append_value_fn(),
-        }
-    }
-
     fn generate_append_null_fn(&self) -> syn::ImplItemFn {
         let stmts: Vec<syn::Stmt> = self
             .fields
             .iter()
-            .map(|f| {
-                let ident = f.value.ident.clone().unwrap();
-                match f.proto_type {
-                    proto::Type::Map(_, _) => {
-                        syn::parse_quote! {
-                            let _ = self.#ident.append(false);
-                        }
-                    }
-                    _ => {
-                        syn::parse_quote! {
-                            self.#ident.append_null();
-                        }
-                    }
-                }
-            })
+            .map(|f| f.generate_append_null_stmt())
             .collect();
 
         syn::parse_quote! {
@@ -632,32 +654,7 @@ impl Builder {
         let finish_stmts: Vec<syn::Stmt> = self
             .fields
             .iter()
-            .map(|field| {
-                let ident = field.value.ident.clone().unwrap();
-                let ident_str = ident.to_string();
-                let ident_str = ident_str.strip_prefix("r#").unwrap_or(&ident_str);
-
-                let is_nullable = match self.message_type {
-                    MessageType::Struct => match field.proto_type {
-                        proto::Type::Map(_, _) => true,
-                        _ => !(field.proto_cardinality == proto::Cardinality::Singular),
-                    },
-                    MessageType::Enum => true,
-                };
-                syn::parse_quote! {
-                    {
-                        let _array = ::std::sync::Arc::new(self.#ident.#finish());
-                        let _field = ::arrow::datatypes::Field::new(
-                            #ident_str,
-                            ::arrow::array::Array::data_type(_array.as_ref()).clone(),
-                            #is_nullable,
-                        );
-
-                        arrays.push(_array);
-                        fields.push(_field);
-                    };
-                }
-            })
+            .map(|f| f.generate_finish_stmt(&finish))
             .collect();
 
         syn::parse_quote! {
@@ -676,49 +673,25 @@ impl Builder {
         }
     }
 
-    fn generate_default_trait_impl(&self) -> syn::ItemImpl {
-        let default_exprs: Vec<syn::FieldValue> = self
-            .fields
-            .iter()
-            .map(|f| match f.proto_type {
-                proto::Type::Map(_, _) => {
-                    let ident = f.value.ident.clone().unwrap();
-                    syn::FieldValue {
-                        attrs: Vec::new(),
-                        member: syn::Member::Named(ident),
-                        colon_token: Some(syn::token::Colon::default()),
-                        expr: syn::parse_quote!(::arrow::array::MapBuilder::new(
-                            None,
-                            Default::default(),
-                            Default::default()
-                        )),
-                    }
-                }
-                _ => {
-                    let ident = f.value.ident.clone().unwrap();
-                    syn::FieldValue {
-                        attrs: Vec::new(),
-                        member: syn::Member::Named(ident),
-                        colon_token: Some(syn::token::Colon::default()),
-                        expr: syn::parse_quote!(Default::default()),
-                    }
-                }
-            })
-            .collect();
+    // fn generate_default_trait_impl(&self) -> syn::ItemImpl {
+    //     let default_exprs: Vec<syn::FieldValue> = self
+    //         .fields
+    //         .iter()
+    //         .map(|f| f.generate_default_value())
+    //         .collect();
 
-        let builder = &self.ident;
-        syn::parse_quote! {
-            impl Default for #builder {
-                fn default() -> Self {
-                    #builder {
-                        #(#default_exprs,)*
-
-                        _nulls: ::arrow::array::NullBufferBuilder::new(0),
-                    }
-                }
-            }
-        }
-    }
+    //     let builder = &self.ident;
+    //     syn::parse_quote! {
+    //         impl Default for #builder {
+    //             fn default() -> Self {
+    //                 #builder {
+    //                     #(#default_exprs,)*
+    //                     _nulls: ::arrow::array::NullBufferBuilder::new(0),
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     fn generate_extend_trait_impl(&self) -> syn::ItemImpl {
         let message = &self.message;

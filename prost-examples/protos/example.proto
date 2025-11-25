@@ -9,16 +9,17 @@ message User {
     uint32 age = 4;
     bool is_active = 5;
     UserType type = 6;
-    repeated Address addresses = 7;
+    Address address = 7;
     oneof payment_method {
         CreditCard credit_card = 8;
         BankAccount bank_account = 9;
     }
     repeated Transaction transactions = 10;
     map <int32, Post> posts = 11;
-    // repeated PostType post_types = 12;
-    // map <string, PostType> user_string = 13;
-    // map <int32, BankAccount> bank = 14;
+
+    repeated PostType post_types = 12;
+    map <string, PostType> user_string = 13;
+    map <int32, BankAccount> bank = 14;
 
     enum UserType {
         READER = 0;

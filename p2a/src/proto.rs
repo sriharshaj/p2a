@@ -1,4 +1,8 @@
-#[derive(Default, Debug, PartialEq)]
+use std::collections::HashMap;
+
+use crate::utils::{extract_map_type_paths, extract_message_type_path, get_absolute_type_path};
+
+#[derive(Default, Debug, Clone)]
 pub enum Type {
     #[default]
     Unknown,
@@ -17,13 +21,13 @@ pub enum Type {
     Bool,
     String,
     Bytes,
-    Message,
+    Message(syn::Path),
     Enum(syn::Path),
     Map(Box<Type>, Box<Type>),
-    Oneof(syn::Path),
+    Oneof(syn::Path, Vec<Field>),
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub enum Cardinality {
     #[default]
     Singular,
@@ -31,25 +35,28 @@ pub enum Cardinality {
     Repeated,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug, Clone)]
 pub struct Field {
+    pub name: syn::Ident,
     pub r#type: Type,
     pub cardinality: Cardinality,
+    // If field is inside oneof arm
+    pub oneof_field: bool,
 }
 
-fn parse_type_from_str(s: &str, namespace: &str) -> syn::Result<Type> {
+fn parse_type_from_str(s: &str, proto_namespace: &str, type_path: syn::Path) -> syn::Result<Type> {
     let s = s.trim();
+    dbg!(s);
 
     // Check for enumeration(TypeName) format
     if let Some(enum_type) = s
         .strip_prefix("enumeration(")
         .and_then(|s| s.strip_suffix(")"))
     {
-        let resolved_path = resolve_type_path(enum_type, namespace);
+        let resolved_path = get_absolute_type_path(enum_type, proto_namespace);
         return Ok(Type::Enum(syn::parse_str(&resolved_path)?));
     }
 
-    // Check for scalar types
     match s {
         "int32" => Ok(Type::Int32),
         "int64" => Ok(Type::Int64),
@@ -66,7 +73,7 @@ fn parse_type_from_str(s: &str, namespace: &str) -> syn::Result<Type> {
         "bool" => Ok(Type::Bool),
         "string" => Ok(Type::String),
         "bytes" => Ok(Type::Bytes),
-        "message" => Ok(Type::Message),
+        "message" => Ok(Type::Message(type_path)),
         _ => Err(syn::Error::new(
             proc_macro2::Span::call_site(),
             format!("Unknown type: {}", s),
@@ -74,30 +81,22 @@ fn parse_type_from_str(s: &str, namespace: &str) -> syn::Result<Type> {
     }
 }
 
-fn resolve_type_path(type_path: &str, namespace: &str) -> String {
-    let mut n_iter = namespace.rsplit("::");
-    let mut tp_iter = type_path.trim().trim_matches('"').rsplit("::");
-    let mut resolved_path = String::from(tp_iter.next().unwrap());
-
-    for s in tp_iter {
-        if s == "super" && n_iter.next().is_some() {
-            continue;
-        }
-        resolved_path = format!("{}::{}", s, resolved_path);
-    }
-    for s in n_iter {
-        resolved_path = format!("{}::{}", s, resolved_path);
-    }
-
-    resolved_path
-}
-
 impl Field {
     pub fn parse_with_namespace(
         input: syn::parse::ParseStream,
-        namespace: &str,
+        ident: &syn::Ident,
+        ty: &syn::Type,
+        proto_namespace: &str,
+        arrow_namespace: &str,
+        is_oneof_field: bool,
+        oneof_fields: &HashMap<String, Vec<Field>>,
     ) -> syn::Result<Self> {
-        let mut attr = Field::default();
+        let mut attr = Field {
+            name: ident.to_owned(),
+            r#type: Default::default(),
+            cardinality: Default::default(),
+            oneof_field: is_oneof_field,
+        };
 
         loop {
             let ident = input.parse::<syn::Ident>()?;
@@ -106,8 +105,8 @@ impl Field {
                 "enumeration" => {
                     input.parse::<syn::Token![=]>()?;
                     let path: syn::LitStr = input.parse()?;
-                    let resolved_path = resolve_type_path(&path.value(), namespace);
-                    attr.r#type = Type::Enum(syn::parse_str(&resolved_path)?);
+                    let path = get_absolute_type_path(&path.value(), proto_namespace);
+                    attr.r#type = Type::Enum(syn::parse_str(&path)?);
                 }
                 "map" => {
                     input.parse::<syn::Token![=]>()?;
@@ -123,16 +122,20 @@ impl Field {
                         ));
                     }
 
-                    let key_type = parse_type_from_str(parts[0], namespace)?;
-                    let value_type = parse_type_from_str(parts[1], namespace)?;
+                    let (key_path, val_path) = extract_map_type_paths(ty, arrow_namespace)?;
+                    let key_type = parse_type_from_str(parts[0], proto_namespace, key_path)?;
+                    let value_type = parse_type_from_str(parts[1], proto_namespace, val_path)?;
 
                     attr.r#type = Type::Map(Box::new(key_type), Box::new(value_type));
                 }
                 "oneof" => {
                     input.parse::<syn::Token![=]>()?;
                     let path = input.parse::<syn::LitStr>()?;
-                    let resolved_path = resolve_type_path(&path.value(), namespace);
-                    attr.r#type = Type::Oneof(syn::parse_str(&resolved_path)?);
+                    let path = get_absolute_type_path(&path.value(), arrow_namespace);
+                    attr.r#type = Type::Oneof(
+                        extract_message_type_path(ty, proto_namespace)?,
+                        oneof_fields.get(&path).unwrap().clone(),
+                    );
                     attr.cardinality = Cardinality::Optional;
                 }
                 "bytes" => {
@@ -189,7 +192,8 @@ impl Field {
                     attr.r#type = Type::String;
                 }
                 "message" => {
-                    attr.r#type = Type::Message;
+                    attr.cardinality = Cardinality::Optional;
+                    attr.r#type = Type::Message(extract_message_type_path(ty, arrow_namespace)?);
                 }
                 "tags" | "tag" => {
                     input.parse::<syn::Token![=]>()?;
