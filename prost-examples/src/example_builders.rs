@@ -6,11 +6,13 @@ pub struct UserBuilder {
     pub age: ::arrow::array::UInt32Builder,
     pub is_active: ::arrow::array::BooleanBuilder,
     pub r#type: ::arrow::array::StringBuilder,
-    pub address: self::user::AddressBuilder,
-    pub transactions: ::arrow::array::ListBuilder<self::TransactionBuilder>,
+    pub address: crate::example_builders::user::AddressBuilder,
+    pub transactions: ::arrow::array::ListBuilder<
+        crate::example_builders::TransactionBuilder,
+    >,
     pub posts: ::arrow::array::MapBuilder<
         ::arrow::array::Int32Builder,
-        self::PostBuilder,
+        crate::example_builders::PostBuilder,
     >,
     pub post_types: ::arrow::array::ListBuilder<::arrow::array::StringBuilder>,
     pub user_string: ::arrow::array::MapBuilder<
@@ -19,11 +21,44 @@ pub struct UserBuilder {
     >,
     pub bank: ::arrow::array::MapBuilder<
         ::arrow::array::Int32Builder,
-        self::BankAccountBuilder,
+        crate::example_builders::BankAccountBuilder,
     >,
-    pub credit_card: self::CreditCardBuilder,
-    pub bank_account: self::BankAccountBuilder,
+    pub credit_card: crate::example_builders::CreditCardBuilder,
+    pub bank_account: crate::example_builders::BankAccountBuilder,
     _nulls: ::arrow::array::NullBufferBuilder,
+}
+impl Default for UserBuilder {
+    fn default() -> Self {
+        UserBuilder {
+            id: Default::default(),
+            name: Default::default(),
+            email: Default::default(),
+            age: Default::default(),
+            is_active: Default::default(),
+            r#type: Default::default(),
+            address: Default::default(),
+            transactions: Default::default(),
+            posts: ::arrow::array::MapBuilder::new(
+                None,
+                Default::default(),
+                Default::default(),
+            ),
+            post_types: Default::default(),
+            user_string: ::arrow::array::MapBuilder::new(
+                None,
+                Default::default(),
+                Default::default(),
+            ),
+            bank: ::arrow::array::MapBuilder::new(
+                None,
+                Default::default(),
+                Default::default(),
+            ),
+            credit_card: Default::default(),
+            bank_account: Default::default(),
+            _nulls: ::arrow::array::NullBufferBuilder::new(0),
+        }
+    }
 }
 impl UserBuilder {
     pub fn append_value(&mut self, record: crate::example::User) {
@@ -474,6 +509,18 @@ pub mod user {
         pub country: ::arrow::array::StringBuilder,
         _nulls: ::arrow::array::NullBufferBuilder,
     }
+    impl Default for AddressBuilder {
+        fn default() -> Self {
+            AddressBuilder {
+                street: Default::default(),
+                city: Default::default(),
+                state: Default::default(),
+                zip_code: Default::default(),
+                country: Default::default(),
+                _nulls: ::arrow::array::NullBufferBuilder::new(0),
+            }
+        }
+    }
     impl AddressBuilder {
         pub fn append_value(&mut self, record: crate::example::user::Address) {
             self.street.append_value(record.street);
@@ -651,6 +698,15 @@ pub struct PostBuilder {
     pub body: ::arrow::array::BinaryBuilder,
     _nulls: ::arrow::array::NullBufferBuilder,
 }
+impl Default for PostBuilder {
+    fn default() -> Self {
+        PostBuilder {
+            title: Default::default(),
+            body: Default::default(),
+            _nulls: ::arrow::array::NullBufferBuilder::new(0),
+        }
+    }
+}
 impl PostBuilder {
     pub fn append_value(&mut self, record: crate::example::Post) {
         self.title.append_value(record.title);
@@ -757,6 +813,15 @@ pub struct TransactionBuilder {
     pub amount: ::arrow::array::Float32Builder,
     pub timestamp: ::arrow::array::UInt64Builder,
     _nulls: ::arrow::array::NullBufferBuilder,
+}
+impl Default for TransactionBuilder {
+    fn default() -> Self {
+        TransactionBuilder {
+            amount: Default::default(),
+            timestamp: Default::default(),
+            _nulls: ::arrow::array::NullBufferBuilder::new(0),
+        }
+    }
 }
 impl TransactionBuilder {
     pub fn append_value(&mut self, record: crate::example::Transaction) {
@@ -869,6 +934,17 @@ pub struct CreditCardBuilder {
     pub expiry_year: ::arrow::array::UInt32Builder,
     pub cvv: ::arrow::array::StringBuilder,
     _nulls: ::arrow::array::NullBufferBuilder,
+}
+impl Default for CreditCardBuilder {
+    fn default() -> Self {
+        CreditCardBuilder {
+            card_number: Default::default(),
+            expiry_month: Default::default(),
+            expiry_year: Default::default(),
+            cvv: Default::default(),
+            _nulls: ::arrow::array::NullBufferBuilder::new(0),
+        }
+    }
 }
 impl CreditCardBuilder {
     pub fn append_value(&mut self, record: crate::example::CreditCard) {
@@ -1024,6 +1100,16 @@ pub struct BankAccountBuilder {
     pub routing_number: ::arrow::array::StringBuilder,
     pub bank_name: ::arrow::array::StringBuilder,
     _nulls: ::arrow::array::NullBufferBuilder,
+}
+impl Default for BankAccountBuilder {
+    fn default() -> Self {
+        BankAccountBuilder {
+            account_number: Default::default(),
+            routing_number: Default::default(),
+            bank_name: Default::default(),
+            _nulls: ::arrow::array::NullBufferBuilder::new(0),
+        }
+    }
 }
 impl BankAccountBuilder {
     pub fn append_value(&mut self, record: crate::example::BankAccount) {

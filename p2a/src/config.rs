@@ -13,6 +13,7 @@ pub enum EnumRepr {
 pub struct Config {
     enum_repr: EnumRepr,
     proto_root: String,
+    arrow_root: String,
 }
 
 impl Config {
@@ -30,6 +31,11 @@ impl Config {
         self
     }
 
+    pub fn with_arrow_namespace(mut self, arrow_root: String) -> Self {
+        self.arrow_root = arrow_root;
+        self
+    }
+
     pub fn generate_builders(
         &self,
         source: &path::Path,
@@ -38,9 +44,13 @@ impl Config {
         let proto_file_content = fs::read_to_string(source)?;
         let proto_code = syn::parse_file(&proto_file_content)?;
 
-        let oneof_enums = parse_oneof(&proto_code.items, &self.proto_root, "self")?;
-        let items =
-            generate_arrow_builders(proto_code.items, &self.proto_root, "self", &oneof_enums)?;
+        let oneof_enums = parse_oneof(&proto_code.items, &self.proto_root, &self.arrow_root)?;
+        let items = generate_arrow_builders(
+            proto_code.items,
+            &self.proto_root,
+            &self.arrow_root,
+            &oneof_enums,
+        )?;
         let builders_code = syn::File {
             shebang: None,
             attrs: Vec::new(),

@@ -449,32 +449,37 @@ impl proto::Field {
         }
     }
 
-    // fn generate_default_value(&self) -> syn::FieldValue {
-    //     match self.r#type {
-    //         proto::Type::Map(_, _) => {
-    //             let ident = self.name.clone();
-    //             syn::FieldValue {
-    //                 attrs: Vec::new(),
-    //                 member: syn::Member::Named(ident),
-    //                 colon_token: Some(syn::token::Colon::default()),
-    //                 expr: syn::parse_quote!(::arrow::array::MapBuilder::new(
-    //                     None,
-    //                     Default::default(),
-    //                     Default::default()
-    //                 )),
-    //             }
-    //         }
-    //         _ => {
-    //             let ident = self.name.clone();
-    //             syn::FieldValue {
-    //                 attrs: Vec::new(),
-    //                 member: syn::Member::Named(ident),
-    //                 colon_token: Some(syn::token::Colon::default()),
-    //                 expr: syn::parse_quote!(Default::default()),
-    //             }
-    //         }
-    //     }
-    // }
+    fn generate_default_value(&self) -> Vec<syn::FieldValue> {
+        match &self.r#type {
+            proto::Type::Map(_, _) => {
+                let ident = self.name.clone();
+                vec![syn::FieldValue {
+                    attrs: Vec::new(),
+                    member: syn::Member::Named(ident),
+                    colon_token: Some(syn::token::Colon::default()),
+                    expr: syn::parse_quote!(::arrow::array::MapBuilder::new(
+                        None,
+                        Default::default(),
+                        Default::default()
+                    )),
+                }]
+            }
+            proto::Type::Oneof(_, fields) => fields
+                .iter()
+                .flat_map(|f| f.generate_default_value())
+                .collect(),
+
+            _ => {
+                let ident = self.name.clone();
+                vec![syn::FieldValue {
+                    attrs: Vec::new(),
+                    member: syn::Member::Named(ident),
+                    colon_token: Some(syn::token::Colon::default()),
+                    expr: syn::parse_quote!(Default::default()),
+                }]
+            }
+        }
+    }
 }
 
 pub enum MessageType {
@@ -540,13 +545,13 @@ impl Builder {
                 #finish_cloned_fn
             }
         };
-        // let default_trait_impl = self.generate_default_trait_impl();
+        let default_trait_impl = self.generate_default_trait_impl();
         let extend_trait_impl = self.generate_extend_trait_impl();
         let array_builder_trait_impl = self.generate_array_builder_trait_impl();
 
         vec![
             syn::Item::Struct(builder_struct),
-            // syn::Item::Impl(default_trait_impl),
+            syn::Item::Impl(default_trait_impl),
             syn::Item::Impl(builder_impl),
             syn::Item::Impl(extend_trait_impl),
             syn::Item::Impl(array_builder_trait_impl),
@@ -673,25 +678,25 @@ impl Builder {
         }
     }
 
-    // fn generate_default_trait_impl(&self) -> syn::ItemImpl {
-    //     let default_exprs: Vec<syn::FieldValue> = self
-    //         .fields
-    //         .iter()
-    //         .map(|f| f.generate_default_value())
-    //         .collect();
+    fn generate_default_trait_impl(&self) -> syn::ItemImpl {
+        let default_exprs: Vec<syn::FieldValue> = self
+            .fields
+            .iter()
+            .flat_map(|f| f.generate_default_value())
+            .collect();
 
-    //     let builder = &self.ident;
-    //     syn::parse_quote! {
-    //         impl Default for #builder {
-    //             fn default() -> Self {
-    //                 #builder {
-    //                     #(#default_exprs,)*
-    //                     _nulls: ::arrow::array::NullBufferBuilder::new(0),
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
+        let builder = &self.ident;
+        syn::parse_quote! {
+            impl Default for #builder {
+                fn default() -> Self {
+                    #builder {
+                        #(#default_exprs,)*
+                        _nulls: ::arrow::array::NullBufferBuilder::new(0),
+                    }
+                }
+            }
+        }
+    }
 
     fn generate_extend_trait_impl(&self) -> syn::ItemImpl {
         let message = &self.message;
