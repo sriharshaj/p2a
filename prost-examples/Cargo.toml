@@ -6,10 +6,10 @@ edition = "2024"
 [dependencies]
 arrow.workspace = true
 prost.workspace = true
-proto2arrow = { path = "../proto2arrow-macro/", version = "0.1.0" }
 
 [build-dependencies]
 prost-build.workspace = true
+p2a = { path = "../p2a/", version = "0.1.0" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

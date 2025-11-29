@@ -1,9 +1,5 @@
 mod card;
-mod generated {
-    pub mod example {
-        include!("generated/example.rs");
-    }
-}
+pub mod example;
+pub mod example_builders;
 
 pub use card::*;
-pub use generated::*;

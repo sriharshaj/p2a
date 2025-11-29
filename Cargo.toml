@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["prost-examples", "proto2arrow-macro"]
+members = ["prost-examples", "p2a"]
 
 [workspace.dependencies]
 arrow = "56.1.0"
