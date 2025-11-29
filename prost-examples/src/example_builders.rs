@@ -245,7 +245,25 @@ impl UserBuilder {
             fields.push(_field);
         };
         {
-            let _array = ::std::sync::Arc::new(self.transactions.finish());
+            let raw_array = self.transactions.finish();
+            let mut _array: ::arrow::array::ArrayRef = ::std::sync::Arc::new(raw_array);
+            if let ::arrow::datatypes::DataType::List(inner_field) = _array.data_type() {
+                let new_inner_field = ::std::sync::Arc::new(
+                    ::arrow::datatypes::Field::new(
+                        "element",
+                        inner_field.data_type().clone(),
+                        true,
+                    ),
+                );
+                let new_data_type = ::arrow::datatypes::DataType::List(new_inner_field);
+                let new_data = _array
+                    .to_data()
+                    .into_builder()
+                    .data_type(new_data_type)
+                    .build()
+                    .expect("Failed to rebuild array data with renamed field");
+                _array = ::arrow::array::make_array(new_data);
+            }
             let _field = ::arrow::datatypes::Field::new(
                 "transactions",
                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),
@@ -265,7 +283,25 @@ impl UserBuilder {
             fields.push(_field);
         };
         {
-            let _array = ::std::sync::Arc::new(self.post_types.finish());
+            let raw_array = self.post_types.finish();
+            let mut _array: ::arrow::array::ArrayRef = ::std::sync::Arc::new(raw_array);
+            if let ::arrow::datatypes::DataType::List(inner_field) = _array.data_type() {
+                let new_inner_field = ::std::sync::Arc::new(
+                    ::arrow::datatypes::Field::new(
+                        "element",
+                        inner_field.data_type().clone(),
+                        true,
+                    ),
+                );
+                let new_data_type = ::arrow::datatypes::DataType::List(new_inner_field);
+                let new_data = _array
+                    .to_data()
+                    .into_builder()
+                    .data_type(new_data_type)
+                    .build()
+                    .expect("Failed to rebuild array data with renamed field");
+                _array = ::arrow::array::make_array(new_data);
+            }
             let _field = ::arrow::datatypes::Field::new(
                 "post_types",
                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),
@@ -396,7 +432,25 @@ impl UserBuilder {
             fields.push(_field);
         };
         {
-            let _array = ::std::sync::Arc::new(self.transactions.finish_cloned());
+            let raw_array = self.transactions.finish_cloned();
+            let mut _array: ::arrow::array::ArrayRef = ::std::sync::Arc::new(raw_array);
+            if let ::arrow::datatypes::DataType::List(inner_field) = _array.data_type() {
+                let new_inner_field = ::std::sync::Arc::new(
+                    ::arrow::datatypes::Field::new(
+                        "element",
+                        inner_field.data_type().clone(),
+                        true,
+                    ),
+                );
+                let new_data_type = ::arrow::datatypes::DataType::List(new_inner_field);
+                let new_data = _array
+                    .to_data()
+                    .into_builder()
+                    .data_type(new_data_type)
+                    .build()
+                    .expect("Failed to rebuild array data with renamed field");
+                _array = ::arrow::array::make_array(new_data);
+            }
             let _field = ::arrow::datatypes::Field::new(
                 "transactions",
                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),
@@ -416,7 +470,25 @@ impl UserBuilder {
             fields.push(_field);
         };
         {
-            let _array = ::std::sync::Arc::new(self.post_types.finish_cloned());
+            let raw_array = self.post_types.finish_cloned();
+            let mut _array: ::arrow::array::ArrayRef = ::std::sync::Arc::new(raw_array);
+            if let ::arrow::datatypes::DataType::List(inner_field) = _array.data_type() {
+                let new_inner_field = ::std::sync::Arc::new(
+                    ::arrow::datatypes::Field::new(
+                        "element",
+                        inner_field.data_type().clone(),
+                        true,
+                    ),
+                );
+                let new_data_type = ::arrow::datatypes::DataType::List(new_inner_field);
+                let new_data = _array
+                    .to_data()
+                    .into_builder()
+                    .data_type(new_data_type)
+                    .build()
+                    .expect("Failed to rebuild array data with renamed field");
+                _array = ::arrow::array::make_array(new_data);
+            }
             let _field = ::arrow::datatypes::Field::new(
                 "post_types",
                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),

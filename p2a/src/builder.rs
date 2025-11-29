@@ -432,20 +432,81 @@ impl proto::Field {
                 }
             }
             _ => {
-                syn::parse_quote! {
-                    {
-                        let _array = ::std::sync::Arc::new(self.#ident.#finish());
-                        let _field = ::arrow::datatypes::Field::new(
-                            #ident_str,
-                            ::arrow::array::Array::data_type(_array.as_ref()).clone(),
-                            #is_nullable,
-                        );
+                // Check if this is a Repeated field (List) but NOT a Map
+                // Maps are repeated in proto but usually map to MapArray/StructArray, handled differently
+                let is_repeated_list = matches!(self.cardinality, proto::Cardinality::Repeated)
+                    && !matches!(self.r#type, proto::Type::Map(_, _));
 
-                        arrays.push(_array);
-                        fields.push(_field);
-                    };
+                if is_repeated_list {
+                    syn::parse_quote! {
+                        {
+                            // 1. Finish the builder (returns concrete array type)
+                            let raw_array = self.#ident.#finish();
+                            // Wrap as generic ArrayRef immediately
+                            let mut _array: ::arrow::array::ArrayRef = ::std::sync::Arc::new(raw_array);
+
+                            // 2. Rename inner field "item" -> "element" for Parquet compatibility
+                            // We use ArrayData manipulation to be safe against specific List implementations
+                            if let ::arrow::datatypes::DataType::List(inner_field) = _array.data_type() {
+                                // Create new inner field with name "element"
+                                let new_inner_field = ::std::sync::Arc::new(::arrow::datatypes::Field::new(
+                                    "element",
+                                    inner_field.data_type().clone(),
+                                    true // Keep inner elements nullable
+                                ));
+
+                                let new_data_type = ::arrow::datatypes::DataType::List(new_inner_field);
+
+                                // Zero-copy rebuild of ArrayData with new DataType
+                                let new_data = _array.to_data()
+                                    .into_builder()
+                                    .data_type(new_data_type)
+                                    .build()
+                                    .expect("Failed to rebuild array data with renamed field");
+
+                                _array = ::arrow::array::make_array(new_data);
+                            }
+
+                            let _field = ::arrow::datatypes::Field::new(
+                                #ident_str,
+                                ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                                #is_nullable,
+                            );
+
+                            arrays.push(_array);
+                            fields.push(_field);
+                        };
+                    }
+                } else {
+                    syn::parse_quote! {
+                        {
+                            let _array = ::std::sync::Arc::new(self.#ident.#finish());
+                            let _field = ::arrow::datatypes::Field::new(
+                                #ident_str,
+                                ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+                                #is_nullable,
+                            );
+
+                            arrays.push(_array);
+                            fields.push(_field);
+                        };
+                    }
                 }
-            }
+            } // _ => {
+              //     syn::parse_quote! {
+              //         {
+              //             let _array = ::std::sync::Arc::new(self.#ident.#finish());
+              //             let _field = ::arrow::datatypes::Field::new(
+              //                 #ident_str,
+              //                 ::arrow::array::Array::data_type(_array.as_ref()).clone(),
+              //                 #is_nullable,
+              //             );
+
+              //             arrays.push(_array);
+              //             fields.push(_field);
+              //         };
+              //     }
+              // }
         }
     }
 
